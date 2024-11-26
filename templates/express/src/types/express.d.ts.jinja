@@ -1,0 +1,11 @@
+// express.d.ts
+import { Request } from "express";
+import { I{{ model.name }} } from "../models/{{ model.name | lower }}Model"; // Import the interface
+
+declare global {
+  namespace Express {
+    interface Request {
+      {{ model.name | lower }}?: I{{ model.name }}; // Update the type to match model
+    }
+  }
+}

@@ -1,0 +1,25 @@
+import dotenv from "dotenv";
+import assert from "assert";
+
+// Load environment variables from the .env file
+dotenv.config();
+
+// Validate required environment variables
+{% for env in required_env %}
+assert(process.env.{{ env }}, "{{ env }} environment variable is required");
+{% endfor %}
+
+interface Config {
+  {% for config in config_vars %}
+  {{ config.name }}: {{ config.type }};
+  {% endfor %}
+}
+
+const config: Config = {
+  {% for config in config_vars %}
+  // {{ config.description }}
+  {{ config.name }}: {% if config.type == "number" %}Number({% endif %}process.env.{{ config.env_var }}{% if config.type == "number" %}){% endif %} || {{ config.default }},
+  {% endfor %}
+};
+
+export default config;

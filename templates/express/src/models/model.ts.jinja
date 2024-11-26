@@ -1,0 +1,96 @@
+// templates/express/models/model.ts.jinja
+{% if model.features.database == 'mongoose' %}
+import mongoose, { Document, Model } from "mongoose";
+{% elif model.features.database == 'firebase' %}
+import { getFirestore } from 'firebase-admin/firestore';
+{% endif %}
+{% if model.features.auth %}
+import bcrypt from "bcrypt";
+{% endif %}
+
+// Define the {{ model.name }} interface
+{% if model.features.database == 'mongoose' %}
+interface I{{ model.name }} extends Document {
+{% else %}
+interface I{{ model.name }} {
+  id: string;
+{% endif %}
+  {% for field in model.fields %}
+  {{ field.name }}: {{ field.type }};
+  {% endfor %}
+  {% for method in model.methods %}
+  {{ method.name }}({{ method.params | join(', ') }}): Promise<{{ method.returnType }}>;
+  {% endfor %}
+}
+
+{% if model.features.database == 'mongoose' %}
+// Define the {{ model.name | lower }} schema
+const {{ model.name | lower }}Schema = new mongoose.Schema<I{{ model.name }}>({
+  {% for field in model.fields %}
+  {{ field.name }}: {
+    type: {{ field.schemaType }},
+    {% for option, value in field.options.items() %}
+    {{ option }}: {{ value }},
+    {% endfor %}
+  },
+  {% endfor %}
+});
+
+{% for hook in model.hooks %}
+// {{ hook.description }}
+{{ model.name | lower }}Schema.pre<I{{ model.name }}>("{{ hook.event }}", async function (next) {
+  {{ hook.implementation | indent(2) }}
+  next();
+});
+{% endfor %}
+
+{% for method in model.methods %}
+// {{ method.description }}
+{{ model.name | lower }}Schema.methods.{{ method.name }} = async function (
+  {{ method.params | join(', ') }}
+): Promise<{{ method.returnType }}> {
+  {{ method.implementation | indent(2) }}
+};
+{% endfor %}
+
+// Create the {{ model.name | lower }} model
+const {{ model.name }}: Model<I{{ model.name }}> = mongoose.model<I{{ model.name }}>("{{ model.name }}", {{ model.name | lower }}Schema);
+{% else %}
+// Firebase implementation
+const db = getFirestore();
+const {{ model.name | lower }}Collection = db.collection('{{ model.name | lower }}s');
+
+class {{ model.name }} implements I{{ model.name }} {
+  id: string;
+  {% for field in model.fields %}
+  {{ field.name }}: {{ field.type }};
+  {% endfor %}
+
+  constructor(data: Partial<I{{ model.name }}>) {
+    this.id = data.id || '';
+    {% for field in model.fields %}
+    this.{{ field.name }} = data.{{ field.name }};
+    {% endfor %}
+  }
+
+  {% for method in model.methods %}
+  // {{ method.description }}
+  async {{ method.name }}({{ method.params | join(', ') }}): Promise<{{ method.returnType }}> {
+    {{ method.implementation | indent(4) }}
+  }
+  {% endfor %}
+
+  // Static methods for Firebase operations
+  static async findById(id: string): Promise<{{ model.name }} | null> {
+    const doc = await {{ model.name | lower }}Collection.doc(id).get();
+    return doc.exists ? new {{ model.name }}({ id: doc.id, ...doc.data() }) : null;
+  }
+
+  static async create(data: Partial<I{{ model.name }}>): Promise<{{ model.name }}> {
+    const docRef = await {{ model.name | lower }}Collection.add(data);
+    return new {{ model.name }}({ id: docRef.id, ...data });
+  }
+}
+{% endif %}
+
+export default {{ model.name }};

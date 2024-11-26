@@ -1,0 +1,9 @@
+[package]
+name = "tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quickform = { path = "../quickform" }
+codegen = { path = "../codegen" }
+async-openai = "0.25.0"

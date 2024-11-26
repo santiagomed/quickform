@@ -1,0 +1,16 @@
+[package]
+name = "quickform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.132"
+thiserror = "1.0.68"
+tokio = { version = "1.41.1", features = ["full"] }
+codegen = { path = "../codegen" }
+futures = "0.3.31"
+tera = "1.20.0"
+
+[dev-dependencies]
+tempdir = "0.3.7"

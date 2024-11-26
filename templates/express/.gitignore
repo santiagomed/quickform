@@ -1,0 +1,74 @@
+# Node modules
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+
+# Production build
+build/
+dist/
+
+# Dependency directories
+coverage/
+.tmp/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE/editor specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# TypeScript
+*.tsbuildinfo
+
+# npm package files
+*.tgz
+
+# Optional npm cache directory
+.npm
+
+# Package lock files
+package-lock.json
+yarn.lock
+
+# Test and coverage output
+.jest/
+*.test.*
+
+# Miscellaneous
+*.swp
+*~
+__MACOSX/
+
+# Database files
+*.sqlite3
+*.db
+
+# Docker files
+docker-compose.yml
+Dockerfile
+
+# Archives
+*.zip
+*.tar.gz
+
+# Temporary files
+*.temp
+.temp
+
+# Compiled binary
+*.exe
+*.dll
+*.so
+*.dylib

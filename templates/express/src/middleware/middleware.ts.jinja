@@ -1,0 +1,19 @@
+// templates/express/middleware/{{ name | lower }}.ts.jinja
+{% for import in imports %}
+import {{ import.name }}{% if import.as %} as {{ import.as }}{% endif %} from "{{ import.path }}";
+{% endfor %}
+
+// {{ description }}
+const {{ name }} = async (
+req: Request,
+res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    {{ implementation | indent(4) }}
+  } catch (err) {
+    {{ error_handler | indent(4) }}
+  }
+};
+
+  export default {{ name }};

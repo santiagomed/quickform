@@ -1,0 +1,40 @@
+{
+  "name": "express-api-authentication",
+  "version": "1.0.0",
+  "description": "A minimal express API with user authentication",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "ts-node src/server.ts",
+    "test": "mocha -r ts-node/register test/**/*.test.ts",
+    "dev": "nodemon --exec ts-node src/server.ts"
+  },
+  "keywords": [
+    "express",
+    "api",
+    "authentication",
+    "nodejs",
+    "mvc"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.8.0",
+    {% if features.cors %}
+    "cors": "^2.8.5"
+    {% endif %}
+    {% for dependency in dependencies %}
+    "{{ dependency.name }}": "^{{ dependency.version }}"
+    {% endfor %}
+  },
+  "devDependencies": {
+    "ts-node": "^10.0.0",
+    "typescript": "^4.0.0"
+  }
+}

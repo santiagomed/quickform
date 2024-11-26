@@ -1,0 +1,19 @@
+import express from "express";
+import * as {{ model.name | lower }}Controller from "../controllers/{{ model.name | lower }}Controller";
+{% if model.features.auth %}
+import authMiddleware from "../middleware/authMiddleware";
+{% endif %}
+
+const router = express.Router();
+
+{% for route in model.routes %}
+// {{ route.description }}
+router.{{ route.method }}(
+    "{{ route.path }}"{% if route.requiresAuth %},
+    authMiddleware{% endif %},
+    {{ model.name | lower }}Controller.{{ route.handler }}
+);
+
+{% endfor %}
+
+export default router;

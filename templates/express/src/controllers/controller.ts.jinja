@@ -1,0 +1,23 @@
+// templates/express/controllers/controller.ts.jinja
+import { Request, Response, NextFunction } from "express";
+import {{ model.name }} from "../models/{{ model.name | lower }}Model.js";
+{% if model.features.auth %}
+import jwt from "jsonwebtoken";
+import config from "../config/config.js";
+{% endif %}
+
+{% for operation in model.operations %}
+// {{ operation.description }}
+export const {{ operation.name }} = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    {{ operation.implementation | indent(4) }}
+  } catch (err) {
+    next(err);
+  }
+};
+
+{% endfor %}

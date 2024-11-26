@@ -1,0 +1,49 @@
+// templates/express/models/model.ts.jinja
+import mongoose, { Document, Model } from "mongoose";
+{% if model.features.auth %}
+import bcrypt from "bcrypt";
+{% endif %}
+
+// Define the {{ model.name }} schema interface
+interface I{{ model.name }} extends Document {
+  {% for field in model.fields %}
+  {{ field.name }}: {{ field.type }};
+  {% endfor %}
+  {% for method in model.methods %}
+  {{ method.name }}({{ method.params | join(', ') }}): Promise<{{ method.returnType }}>;
+  {% endfor %}
+}
+
+// Define the {{ model.name | lower }} schema
+const {{ model.name | lower }}Schema = new mongoose.Schema<I{{ model.name }}>({
+  {% for field in model.fields %}
+  {{ field.name }}: {
+    type: {{ field.schemaType }},
+    {% for option, value in field.options.items() %}
+    {{ option }}: {{ value }},
+    {% endfor %}
+  },
+  {% endfor %}
+});
+
+{% for hook in model.hooks %}
+// {{ hook.description }}
+{{ model.name | lower }}Schema.pre<I{{ model.name }}>("{{ hook.event }}", async function (next) {
+  {{ hook.implementation | indent(2) }}
+  next();
+});
+{% endfor %}
+
+{% for method in model.methods %}
+// {{ method.description }}
+{{ model.name | lower }}Schema.methods.{{ method.name }} = async function (
+  {{ method.params | join(', ') }}
+): Promise<{{ method.returnType }}> {
+  {{ method.implementation | indent(2) }}
+};
+{% endfor %}
+
+// Create the {{ model.name | lower }} model
+const {{ model.name }}: Model<I{{ model.name }}> = mongoose.model<I{{ model.name }}>("{{ model.name }}", {{ model.name | lower }}Schema);
+
+export default {{ model.name }};
