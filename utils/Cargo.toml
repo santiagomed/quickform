@@ -1,15 +1,13 @@
 [package]
-name = "quickform"
+name = "utils"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+minijinja = "2.5.0"
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.41.1", features = ["full"] }
-codegen = { path = "../codegen" }
-futures = "0.3.31"
+tera = "1.20.0"
 
 [dev-dependencies]
 tempdir = "0.3.7"

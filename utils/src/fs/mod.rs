@@ -49,20 +49,23 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
-    pub fn new() -> Result<Self, FSError> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    pub fn new() -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-        Ok(FileSystem {
+        Self {
             root: DirectoryNode {
                 children: HashMap::new(),
                 created: timestamp,
             },
-        })
+        }
     }
 
     /// Reads a real directory from the filesystem into memory
     pub fn read_from_disk<P: AsRef<Path>>(path: P) -> Result<Self, FSError> {
-        let mut fs = FileSystem::new()?;
+        let mut fs = FileSystem::new();
         fs.read_directory_recursive("", path)?;
         Ok(fs)
     }
@@ -214,7 +217,7 @@ impl FileSystem {
 
 impl Default for FileSystem {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new()
     }
 }
 
@@ -222,11 +225,10 @@ impl Default for FileSystem {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn test_filesystem() -> Result<(), FSError> {
-        let mut fs = FileSystem::new()?;
+        let mut fs = FileSystem::new();
 
         // Test directory creation
         fs.create_dir("test_dir")?;
