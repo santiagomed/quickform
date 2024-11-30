@@ -1,42 +1,48 @@
+// src/lib.rs
 mod operation;
 mod state;
+mod context;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
 use operation::{FunctionSignature, Operation};
-use state::{State, NoState, IntoFunctionParams};
-
-type BoxedOperation = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn std::any::Any + Send>> + Send>> + Send + Sync>;
+use state::{Data, NoData, IntoFunctionParams};
+use context::Context;
+type BoxedOperation = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
 
 pub struct App<T> {
     state: T,
     operations: HashMap<String, BoxedOperation>,
+    paths: Vec<String>,
 }
 
-impl App<NoState> {
+impl App<NoData> {
     pub fn new() -> Self {
         Self {
-            state: NoState,
+            state: NoData,
             operations: HashMap::new(),
+            paths: Vec::new(),
         }
     }
 
-    pub fn with_state<S>(self, state: S) -> App<State<S>> {
+    pub fn with_state<S>(self, state: S) -> App<Data<S>> {
         App {
-            state: State::new(state),
-            operations: HashMap::new(),
+            state: Data::new(state),
+            operations: self.operations,
+            paths: self.paths,
         }
     }
 }
 
-// Base implementation for App with one state
-impl<S1: Send + Sync + 'static> App<State<S1>> {
-    pub fn with_state<S2>(self, state: S2) -> App<(State<S1>, State<S2>)> {
+// Base implementation for App with one data type
+impl<S1: Send + Sync + 'static> App<Data<S1>> {
+    pub fn with_state<S2>(self, state: S2) -> App<(Data<S1>, Data<S2>)> {
         App {
-            state: (self.state, State::new(state)),
-            operations: HashMap::new(),
+            state: (self.state, Data::new(state)),
+            operations: self.operations,
+            paths: self.paths,
         }
     }
 }
@@ -44,11 +50,12 @@ impl<S1: Send + Sync + 'static> App<State<S1>> {
 // Or we could use a macro to generate these implementations:
 macro_rules! impl_app_with_state {
     (($($idx:tt),*); $($prev:ident),*; $next:ident) => {
-        impl<$($prev: Send + Sync + 'static,)*> App<($(State<$prev>,)*)> {
-            pub fn with_state<$next>(self, state: $next) -> App<($(State<$prev>,)* State<$next>)> {
+        impl<$($prev: Send + Sync + 'static,)*> App<($(Data<$prev>,)*)> {
+            pub fn with_state<$next>(self, state: $next) -> App<($(Data<$prev>,)* Data<$next>)> {
                 App {
-                    state: ($(self.state.$idx,)* State::new(state)),
-                    operations: HashMap::new(),
+                    state: ($(self.state.$idx,)* Data::new(state)),
+                    operations: self.operations,
+                    paths: self.paths,
                 }
             }
         }
@@ -59,7 +66,6 @@ macro_rules! impl_app_with_state {
 impl_app_with_state!((0); S1; S2);
 impl_app_with_state!((0, 1); S1, S2; S3);
 impl_app_with_state!((0, 1, 2); S1, S2, S3; S4);
-impl_app_with_state!((0, 1, 2, 3); S1, S2, S3, S4; S5);
 
 impl<T: Send + Sync + Clone + 'static> App<T> {
     pub fn operation<FSig, F>(mut self, name: &str, operation: F) -> Self 
@@ -67,7 +73,7 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
         FSig: FunctionSignature + 'static,
         F: Operation<FSig> + Copy + Send + Sync + 'static,
         F::Future: Send + 'static,
-        FSig::Output: Send + 'static,
+        FSig::Output: Context,
         T: IntoFunctionParams<FSig>,
     {
         let state = self.state.clone();
@@ -76,21 +82,34 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
             let fut = operation.execute(params);
             Box::pin(async move {
                 let result = fut.await;
-                Box::new(result) as Box<dyn std::any::Any + Send>
+                Box::new(result) as Box<dyn Context>
             }) as Pin<Box<dyn Future<Output = _> + Send>>
         };
 
         self.operations.insert(name.to_string(), Box::new(wrapped_op));
+        self.paths.push(name.to_string());
         self
     }
 
-    pub async fn run_operation<R: Clone + 'static>(&self, name: &str) -> Option<R> {
+    pub async fn run_operation(&self, name: &str) -> Option<minijinja::Value> {
         if let Some(op) = self.operations.get(name) {
             let result = op().await;
-            result.downcast_ref::<R>().cloned()
+            Some(result.to_value())
         } else {
             None
         }
+    }
+
+    pub async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for path in &self.paths {
+            if let Some(context) = self.run_operation(path).await {
+                let template_src = std::fs::read_to_string(path)?;
+                println!("{}", context);
+                let rendered = minijinja::render!(&template_src, context);
+                println!("{}", rendered);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -100,13 +119,13 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[derive(Clone)]
+    #[derive(Clone, serde::Serialize)]
     struct User {
         name: String,
-        _age: u32,
+        age: u32,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, serde::Serialize)]
     struct Config {
         timeout: Duration,
     }
@@ -120,32 +139,39 @@ mod tests {
         let app = App::new()
             .operation("get_default", get_default_name);
 
-        let result = app.run_operation::<String>("get_default").await;
-        assert_eq!(result, Some("Default".to_string()));
+        let result = app.run_operation("get_default").await;
+        assert_eq!(result, Some(minijinja::Value::from("Default")));
     }
 
     #[tokio::test]
     async fn test_single_param() {
-        async fn get_user_name(user: State<User>) -> String {
-            user.get_ref().name.clone()
+        async fn double_age(user: Data<User>) -> User {
+            User {
+                name: user.get_ref().name.clone(),
+                age: user.get_ref().age * 2,
+            }
         }
+
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        let template_path = tmp_dir.path().join("double_age.jinja");
+        std::fs::write(&template_path, "Age: {{ context.age }}").unwrap();
+        let full_path = template_path.to_str().unwrap();
 
         let app = App::new()
             .with_state(User {
                 name: "Alice".to_string(),
-                _age: 30,
+                age: 30,
             })
-            .operation("get_name", get_user_name);
+            .operation(full_path, double_age);
 
-        let result = app.run_operation::<String>("get_name").await;
-        assert_eq!(result, Some("Alice".to_string()));
+        app.run().await.unwrap();
     }
 
     #[tokio::test]
     async fn test_two_params() {
         async fn get_user_with_timeout(
-            user: State<User>,
-            config: State<Config>
+            user: Data<User>,
+            config: Data<Config>
         ) -> (String, Duration) {
             (
                 user.get_ref().name.clone(),
@@ -156,20 +182,20 @@ mod tests {
         let app = App::new()
             .with_state(User {
                 name: "Bob".to_string(),
-                _age: 25,
+                age: 25,
             })
             .with_state(Config {
                 timeout: Duration::from_secs(30),
             })
             .operation("get_user_timeout", get_user_with_timeout);
 
-        let result = app.run_operation::<(String, Duration)>("get_user_timeout").await;
+        let result = app.run_operation("get_user_timeout").await;
         assert!(result.is_some());
     }
 
     #[tokio::test]
     async fn test_three_params() {
-        async fn three_params(x: State<i32>, y: State<i32>, z: State<i32>) -> i32 {
+        async fn three_params(x: Data<i32>, y: Data<i32>, z: Data<i32>) -> i32 {
             x.get_ref() + y.get_ref() + z.get_ref()
         }
 
@@ -179,7 +205,7 @@ mod tests {
             .with_state(3)
             .operation("three_params", three_params);
 
-        let result = app.run_operation::<i32>("three_params").await;
-        assert_eq!(result, Some(6));
+        let result = app.run_operation("three_params").await;
+        assert_eq!(result, Some(minijinja::Value::from(6)));
     }
 }

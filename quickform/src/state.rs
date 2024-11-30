@@ -1,18 +1,19 @@
+// src/state.rs
 use std::sync::Arc;
 use std::ops::Deref;
 use crate::operation::FunctionSignature;
 
-// State wrapper for template functions
-pub struct State<T: ?Sized>(Arc<T>);
+// Data wrapper for template functions
+pub struct Data<T: ?Sized>(Arc<T>);
 
-impl<T> State<T> {
-    /// Create new `State` instance
-    pub fn new(state: T) -> State<T> {
-        State(Arc::new(state))
+impl<T> Data<T> {
+    /// Create new `Data` instance
+    pub fn new(state: T) -> Data<T> {
+        Data(Arc::new(state))
     }
 }
 
-impl<T: ?Sized> State<T> {
+impl<T: ?Sized> Data<T> {
     /// Returns reference to inner `T`
     pub fn get_ref(&self) -> &T {
         self.0.as_ref()
@@ -24,7 +25,7 @@ impl<T: ?Sized> State<T> {
     }
 }
 
-impl<T: ?Sized> Deref for State<T> {
+impl<T: ?Sized> Deref for Data<T> {
     type Target = Arc<T>;
 
     fn deref(&self) -> &Arc<T> {
@@ -32,28 +33,28 @@ impl<T: ?Sized> Deref for State<T> {
     }
 }
 
-impl<T: ?Sized> Clone for State<T> {
-    fn clone(&self) -> State<T> {
-        State(Arc::clone(&self.0))
+impl<T: ?Sized> Clone for Data<T> {
+    fn clone(&self) -> Data<T> {
+        Data(Arc::clone(&self.0))
     }
 }
 
 
-impl<T: Clone + ?Sized> State<T> {
+impl<T: Clone + ?Sized> Data<T> {
     /// Returns a cloned value of the inner `T`
     pub fn get_value(&self) -> T {
         (*self.0).clone()
     }
 }
 
-impl<T: ?Sized> From<Arc<T>> for State<T> {
+impl<T: ?Sized> From<Arc<T>> for Data<T> {
     fn from(arc: Arc<T>) -> Self {
-        State(arc)
+        Data(arc)
     }
 }
 
 #[derive(Default, Clone)]
-pub struct NoState;
+pub struct NoData;
 
 
 // Trait for converting stored states into function parameters
@@ -64,7 +65,7 @@ pub trait IntoFunctionParams<F: FunctionSignature> {
 macro_rules! impl_into_function_params {
     // Base case with no parameters
     () => {
-        impl<F> IntoFunctionParams<F> for NoState 
+        impl<F> IntoFunctionParams<F> for NoData 
         where
             F: FunctionSignature<Params = ()>
         {
@@ -76,9 +77,9 @@ macro_rules! impl_into_function_params {
 
     // Case for single parameter
     ($T:ident) => {
-        impl<$T, F> IntoFunctionParams<F> for State<$T>
+        impl<$T, F> IntoFunctionParams<F> for Data<$T>
         where
-            F: FunctionSignature<Params = State<$T>>,
+            F: FunctionSignature<Params = Data<$T>>,
             $T: Clone + 'static,
         {
             fn into_params(self) -> F::Params {
@@ -89,9 +90,9 @@ macro_rules! impl_into_function_params {
 
     // Case for multiple parameters
     ($($T:ident),+) => {
-        impl<$($T,)+ F> IntoFunctionParams<F> for ($(State<$T>,)+)
+        impl<$($T,)+ F> IntoFunctionParams<F> for ($(Data<$T>,)+)
         where
-            F: FunctionSignature<Params = ($(State<$T>,)+)>,
+            F: FunctionSignature<Params = ($(Data<$T>,)+)>,
             $($T: Clone + 'static,)+
         {
             fn into_params(self) -> F::Params {
@@ -125,18 +126,18 @@ mod tests {
 
     #[test]
     fn test_into_params() {
-        // Test NoState
-        let no_state = NoState;
-        let _: () = <NoState as IntoFunctionParams<fn() -> std::future::Ready<()>>>::into_params(no_state);
+        // Test NoData
+        let no_state = NoData;
+        let _: () = <NoData as IntoFunctionParams<fn() -> std::future::Ready<()>>>::into_params(no_state);
 
         // Test single state
-        let state = State::new(User { _name: "Alice".to_string() });
-        let _: State<User> = <State<User> as IntoFunctionParams<fn(State<User>) -> std::future::Ready<State<User>>>>::into_params(state);
+        let state = Data::new(User { _name: "Alice".to_string() });
+        let _: Data<User> = <Data<User> as IntoFunctionParams<fn(Data<User>) -> std::future::Ready<Data<User>>>>::into_params(state);
 
         // Test two states
-        let user_state = State::new(User { _name: "Bob".to_string() });
-        let config_state = State::new(Config { _timeout: Duration::from_secs(30) });
+        let user_state = Data::new(User { _name: "Bob".to_string() });
+        let config_state = Data::new(Config { _timeout: Duration::from_secs(30) });
         let states = (user_state, config_state);
-        let _: (State<User>, State<Config>) = <(State<User>, State<Config>) as IntoFunctionParams<fn((State<User>, State<Config>)) -> std::future::Ready<(State<User>, State<Config>)>>>::into_params(states);
+        let _: (Data<User>, Data<Config>) = <(Data<User>, Data<Config>) as IntoFunctionParams<fn((Data<User>, Data<Config>)) -> std::future::Ready<(Data<User>, Data<Config>)>>>::into_params(states);
     }
 }
