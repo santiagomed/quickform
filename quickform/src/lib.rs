@@ -2,29 +2,49 @@
 mod operation;
 mod state;
 mod context;
+mod error;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-
+use std::path::Path;
+use quickform_utils::fs::MemFS;
+use quickform_utils::template::TemplateEngine;
 use operation::{FunctionSignature, Operation};
 use state::{Data, NoData, IntoFunctionParams};
 use context::Context;
+use error::AppError;
+
 type BoxedOperation = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
 
 pub struct App<T> {
     state: T,
     operations: HashMap<String, BoxedOperation>,
     paths: Vec<String>,
+    fs: MemFS,
+    engine: TemplateEngine<'static>,
 }
 
 impl App<NoData> {
     pub fn new() -> Self {
         Self {
-            state: NoData,
+            state: NoData,  
             operations: HashMap::new(),
             paths: Vec::new(),
+            fs: MemFS::new(),
+            engine: TemplateEngine::new(),
         }
+    }
+
+    pub fn with_templates<P: AsRef<Path>>(self, template_dir: P) -> Result<Self, AppError> {
+        let mut engine = TemplateEngine::with_dir(template_dir)?;
+        Ok(Self {
+            state: NoData,
+            operations: self.operations,
+            paths: self.paths,
+            fs: self.fs,
+            engine,
+        })
     }
 
     pub fn with_state<S>(self, state: S) -> App<Data<S>> {
@@ -32,6 +52,8 @@ impl App<NoData> {
             state: Data::new(state),
             operations: self.operations,
             paths: self.paths,
+            fs: self.fs,
+            engine: self.engine,
         }
     }
 }
@@ -43,6 +65,8 @@ impl<S1: Send + Sync + 'static> App<Data<S1>> {
             state: (self.state, Data::new(state)),
             operations: self.operations,
             paths: self.paths,
+            fs: self.fs,
+            engine: self.engine,
         }
     }
 }
@@ -56,6 +80,8 @@ macro_rules! impl_app_with_state {
                     state: ($(self.state.$idx,)* Data::new(state)),
                     operations: self.operations,
                     paths: self.paths,
+                    fs: self.fs,
+                    engine: self.engine,
                 }
             }
         }
@@ -91,25 +117,21 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
         self
     }
 
-    pub async fn run_operation(&self, name: &str) -> Option<minijinja::Value> {
-        if let Some(op) = self.operations.get(name) {
-            let result = op().await;
-            Some(result.to_value())
-        } else {
-            None
-        }
-    }
-
-    pub async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(&self) -> Result<(), AppError> {
         for path in &self.paths {
-            if let Some(context) = self.run_operation(path).await {
-                let template_src = std::fs::read_to_string(path)?;
-                println!("{}", context);
-                let rendered = minijinja::render!(&template_src, context);
-                println!("{}", rendered);
-            }
+            self.render(path).await?;
         }
         Ok(())
+    }
+    
+    async fn render(&self, name: &str) -> Result<String, AppError> {
+        if let Some(op) = self.operations.get(name) {
+            let context = op().await.to_value();
+            let template_src = std::fs::read_to_string(name)?;
+            Ok(minijinja::render!(&template_src, context))
+        } else {
+            Err(AppError::IOError(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Operation not found: {}", name))))
+        }
     }
 }
 
@@ -136,19 +158,24 @@ mod tests {
             "Default".to_string()
         }
 
-        let app = App::new()
-            .operation("get_default", get_default_name);
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        let template_path = tmp_dir.path().join("get_default.jinja");
+        std::fs::write(&template_path, "{{ context }}").unwrap();
+        let full_path = template_path.to_str().unwrap();
 
-        let result = app.run_operation("get_default").await;
-        assert_eq!(result, Some(minijinja::Value::from("Default")));
+        let app = App::new()
+            .operation(full_path, get_default_name);
+
+        let result = app.render(full_path).await.unwrap();
+        assert_eq!(result, "Default");
     }
 
     #[tokio::test]
     async fn test_single_param() {
         async fn double_age(user: Data<User>) -> User {
             User {
-                name: user.get_ref().name.clone(),
-                age: user.get_ref().age * 2,
+                name: user.name.clone(),
+                age: user.age * 2,
             }
         }
 
@@ -173,11 +200,13 @@ mod tests {
             user: Data<User>,
             config: Data<Config>
         ) -> (String, Duration) {
-            (
-                user.get_ref().name.clone(),
-                config.get_ref().timeout,
-            )
+            (user.name.clone(), config.timeout)
         }
+
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        let template_path = tmp_dir.path().join("get_user_timeout.jinja");
+        std::fs::write(&template_path, "{{ context[0] }}").unwrap();
+        let full_path = template_path.to_str().unwrap();
 
         let app = App::new()
             .with_state(User {
@@ -187,10 +216,10 @@ mod tests {
             .with_state(Config {
                 timeout: Duration::from_secs(30),
             })
-            .operation("get_user_timeout", get_user_with_timeout);
+            .operation(full_path, get_user_with_timeout);
 
-        let result = app.run_operation("get_user_timeout").await;
-        assert!(result.is_some());
+        let result = app.render(full_path).await.unwrap();
+        assert_eq!(result, "Bob");
     }
 
     #[tokio::test]
@@ -199,13 +228,18 @@ mod tests {
             x.get_ref() + y.get_ref() + z.get_ref()
         }
 
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        let template_path = tmp_dir.path().join("three_params.jinja");
+        std::fs::write(&template_path, "{{ context }}").unwrap();
+        let full_path = template_path.to_str().unwrap();
+
         let app = App::new()
             .with_state(1)
             .with_state(2)
             .with_state(3)
-            .operation("three_params", three_params);
+            .operation(full_path, three_params);
 
-        let result = app.run_operation("three_params").await;
-        assert_eq!(result, Some(minijinja::Value::from(6)));
+        let result = app.render(full_path).await.unwrap();
+        assert_eq!(result, "6");
     }
 }

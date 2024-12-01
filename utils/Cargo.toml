@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-minijinja = "2.5.0"
+minijinja = { version = "2.5.0", features = ["loader"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
-tera = "1.20.0"
 
 [dev-dependencies]
 tempdir = "0.3.7"

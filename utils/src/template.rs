@@ -1,60 +1,52 @@
 // In a separate helper crate (e.g., template-helper/src/lib.rs)
 use serde::Serialize;
 use std::path::Path;
-use tera::Tera;
+use minijinja::Environment;
 
 #[derive(thiserror::Error, Debug)]
-pub(crate) enum TemplateEngineError {
+pub enum TemplateEngineError {
     #[error("Invalid template path")]
     InvalidTemplatePath,
     #[error("Failed to render template")]
-    RenderError(#[from] tera::Error),
+    RenderError(#[from] minijinja::Error),
 }
 
-pub struct TemplateEngine {
-    tera: Tera,
+pub struct TemplateEngine<'a> {
+    env: Environment<'a>,
 }
 
-impl TemplateEngine {
+impl<'a> TemplateEngine<'a> {
     /// Creates a new empty template engine instance without a template directory
     pub fn new() -> Self {
         Self { 
-            tera: Tera::default() 
+            env: Environment::new() 
         }
     }
 
     /// Creates a new template engine instance from a directory path
     pub fn with_dir<P: AsRef<Path>>(template_dir: P) -> Result<Self, TemplateEngineError> {
-        let template_path = template_dir.as_ref().join("**").join("*.html");
-        let template_path_str = template_path.to_str()
-            .ok_or(TemplateEngineError::InvalidTemplatePath)?;
-            
-        let tera = Tera::new(template_path_str)?;
+        let mut env = Environment::new();
+        env.set_loader(minijinja::path_loader(template_dir.as_ref()));
         
-        Ok(Self { tera })
+        Ok(Self { env })
     }
 
     /// Renders a template with the given context
     pub fn render<T: Serialize>(&self, template_name: &str, context: &T) -> Result<String, TemplateEngineError> {
-        let rendered = self.tera.render(template_name, &tera::Context::from_serialize(context)?)?;
+        let tmpl = self.env.get_template(template_name)?;
+        let rendered = tmpl.render(context)?;
         Ok(rendered)
     }
 
     /// Adds or updates a template from a string
-    pub fn add_template_string(&mut self, name: &str, content: &str) -> Result<(), TemplateEngineError> {
-        self.tera.add_raw_template(name, content)?;
+    pub fn add_template_string(&mut self, name: &'a str, content: &'a str) -> Result<(), TemplateEngineError> {
+        self.env.add_template(name, content)?;
         Ok(())
     }
 
-    /// Reloads all templates from the directory
-    pub fn reload(&mut self) -> Result<(), TemplateEngineError> {
-        self.tera.full_reload()?;
-        Ok(())
-    }
-
-    /// Returns a reference to the internal Tera instance
-    pub fn get_tera(&self) -> &Tera {
-        &self.tera
+    /// Returns a reference to the internal Environment instance
+    pub fn get_environment(&self) -> &Environment {
+        &self.env
     }
 }
 

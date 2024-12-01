@@ -31,7 +31,9 @@ enum FSNode {
 #[derive(Debug)]
 struct FileNode {
     content: Vec<u8>,
+    #[allow(unused)]
     created: u64,
+    #[allow(unused)]
     modified: u64,
 }
 
@@ -39,16 +41,17 @@ struct FileNode {
 #[derive(Debug)]
 struct DirectoryNode {
     children: HashMap<String, FSNode>,
+    #[allow(unused)]
     created: u64,
 }
 
 // Main filesystem structure
 #[derive(Debug)]
-pub struct FileSystem {
+pub struct MemFS {
     root: DirectoryNode,
 }
 
-impl FileSystem {
+impl MemFS {
     pub fn new() -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -65,7 +68,7 @@ impl FileSystem {
 
     /// Reads a real directory from the filesystem into memory
     pub fn read_from_disk<P: AsRef<Path>>(path: P) -> Result<Self, FSError> {
-        let mut fs = FileSystem::new();
+        let mut fs = MemFS::new();
         fs.read_directory_recursive("", path)?;
         Ok(fs)
     }
@@ -215,7 +218,7 @@ impl FileSystem {
     }
 }
 
-impl Default for FileSystem {
+impl Default for MemFS {
     fn default() -> Self {
         Self::new()
     }
@@ -228,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_filesystem() -> Result<(), FSError> {
-        let mut fs = FileSystem::new();
+        let mut fs = MemFS::new();
 
         // Test directory creation
         fs.create_dir("test_dir")?;
@@ -265,7 +268,7 @@ mod tests {
         fs::write(nested_dir.join("file2.txt"), "World").unwrap();
 
         // Read the directory into our virtual filesystem
-        let fs = FileSystem::read_from_disk(base_path)?;
+        let fs = MemFS::read_from_disk(base_path)?;
 
         // Verify the structure (order doesn't matter)
         let mut root_contents = fs.list_dir("")?;
