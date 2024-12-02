@@ -48,5 +48,9 @@ impl<'a> TemplateEngine<'a> {
     pub fn get_environment(&self) -> &Environment {
         &self.env
     }
+
+    pub fn get_templates(&self) -> impl Iterator<Item = (&str, String)> {
+        self.env.templates().map(|(name, tmpl)| (name, tmpl.source().to_string()))
+    }
 }
 
