@@ -48,13 +48,16 @@ mod operation;
 mod state;
 mod context;
 mod error;
+mod fs;
+mod template;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::path::Path;
-use quickform_utils::fs::MemFS;
-use quickform_utils::template::TemplateEngine;
+
+use fs::MemFS;
+use template::TemplateEngine;
 use operation::{FunctionSignature, Operation};
 use state::{Data, NoData, IntoFunctionParams};
 use context::Context;
@@ -107,7 +110,7 @@ impl App<NoData> {
     ///
     /// * `Result<Self>` - The configured App or an error if template loading fails
     pub fn with_templates<P: AsRef<Path>>(self, template_dir: P) -> Result<Self> {
-        let engine = TemplateEngine::with_dir(template_dir)?;
+        let engine = TemplateEngine::with_dir(template_dir);
         Ok(Self {
             state: NoData,
             operations: self.operations,

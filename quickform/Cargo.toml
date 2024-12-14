@@ -8,10 +8,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1.41.1", features = ["full"] }
-codegen = { path = "../codegen" }
 futures = "0.3.31"
-minijinja = "2.5.0"
-quickform-utils = { path = "../utils", package = "utils" }
+minijinja = { version = "2.5.0", features = ["loader"] }
 
 [dev-dependencies]
 tempdir = "0.3.7"

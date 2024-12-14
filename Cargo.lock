@@ -150,15 +150,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-name = "codegen"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -862,7 +853,6 @@ dependencies = [
 name = "quickform"
 version = "0.1.0"
 dependencies = [
- "codegen",
  "futures",
  "minijinja",
  "serde",
@@ -870,7 +860,6 @@ dependencies = [
  "tempdir",
  "thiserror 1.0.69",
  "tokio",
- "utils",
 ]
 
 [[package]]
@@ -1376,7 +1365,6 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "async-openai",
- "codegen",
  "quickform",
 ]
 
@@ -1592,16 +1580,6 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "minijinja",
- "serde",
- "tempdir",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "want"

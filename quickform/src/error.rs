@@ -1,5 +1,4 @@
-use quickform_utils::template::TemplateEngineError;
-use quickform_utils::fs::FSError;
+use crate::fs::FSError;
 
 /// Represents all possible errors that can occur in the quickform library
 ///
@@ -23,7 +22,7 @@ use quickform_utils::fs::FSError;
 pub enum Error {
     /// An error occurred while processing templates
     #[error("Template engine error")]
-    TemplateEngineError(#[from] TemplateEngineError),
+    RenderError(#[from] minijinja::Error),
     /// An error occurred during file system operations
     #[error("In memory filesystem error")]
     FileSystemError(#[from] FSError),

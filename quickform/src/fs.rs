@@ -29,7 +29,7 @@ enum FSNode {
 
 // Represents a file and its contents
 #[derive(Debug)]
-struct FileNode {
+pub(crate) struct FileNode {
     content: Vec<u8>,
     #[allow(unused)]
     created: u64,
@@ -47,12 +47,12 @@ struct DirectoryNode {
 
 // Main filesystem structure
 #[derive(Debug)]
-pub struct MemFS {
+pub(crate) struct MemFS {
     root: DirectoryNode,
 }
 
 impl MemFS {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -67,14 +67,14 @@ impl MemFS {
     }
 
     /// Reads a real directory from the filesystem into memory
-    pub fn read_from_disk<P: AsRef<Path>>(path: P) -> Result<Self, FSError> {
+    pub(crate) fn read_from_disk<P: AsRef<Path>>(path: P) -> Result<Self, FSError> {
         let mut fs = MemFS::new();
         fs.read_directory_recursive("", path)?;
         Ok(fs)
     }
 
     // Create a new file at the specified path
-    pub fn create_file(&mut self, path: &str, content: Vec<u8>) -> Result<(), FSError> {
+    pub(crate) fn create_file(&mut self, path: &str, content: Vec<u8>) -> Result<(), FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Err(FSError::InvalidPath);
@@ -93,7 +93,7 @@ impl MemFS {
     }
 
     // Create a new directory at the specified path
-    pub fn create_dir(&mut self, path: &str) -> Result<(), FSError> {
+    pub(crate) fn create_dir(&mut self, path: &str) -> Result<(), FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Err(FSError::InvalidPath);
@@ -145,7 +145,7 @@ impl MemFS {
     }
 
     // Read a file's contents
-    pub fn read_file(&self, path: &str) -> Result<&Vec<u8>, FSError> {
+    pub(crate) fn read_file(&self, path: &str) -> Result<&Vec<u8>, FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Err(FSError::InvalidPath);
@@ -164,7 +164,7 @@ impl MemFS {
     }
 
     // List contents of a directory
-    pub fn list_dir(&self, path: &str) -> Result<Vec<String>, FSError> {
+    pub(crate) fn list_dir(&self, path: &str) -> Result<Vec<String>, FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         let mut current = &self.root;
