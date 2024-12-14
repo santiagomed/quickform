@@ -1,8 +1,9 @@
 //! State management for QuickForm
 //!
-//! This module provides types and traits for managing application state in a thread-safe
+//! This module provides types and traits for managing mutable application state in a thread-safe
 //! and type-safe manner. It includes wrapper types for state data and traits for
-//! converting state into function parameters.
+//! converting state into function parameters. The state can be safely modified across
+//! different tasks using Tokio's async mutex.
 //!
 //! # Examples
 //!
@@ -20,23 +21,29 @@
 //! // Clone the state (only clones the Arc, not the inner data)
 //! let user_state_clone = user_state.clone();
 //!
-//! // Access the inner data
-//! assert_eq!(user_state.get_ref().name, "Alice");
+//! // Access and modify the inner data
+//! async {
+//!     assert_eq!(user_state.clone_inner().await.name, "Alice");
+//!     user_state.update(|user| user.name = "Bob".to_string()).await;
+//!     assert_eq!(user_state.clone_inner().await.name, "Bob");
+//! };
 //! ```
 
 use std::sync::Arc;
 use std::ops::Deref;
+use tokio::sync::Mutex;
 use crate::operation::FunctionSignature;
 
-/// Thread-safe wrapper for state data
+/// Thread-safe wrapper for mutable state data
 ///
-/// Wraps any type T in an Arc for thread-safe reference counting.
-/// The type parameter T can be unsized (indicated by ?Sized).
+/// Wraps any type T in an Arc<Mutex> for thread-safe mutable access.
+/// Provides an ergonomic API for accessing and modifying the state without
+/// directly handling locks.
 ///
 /// # Type Parameters
 ///
 /// * `T` - The type of state being wrapped
-pub struct Data<T: ?Sized>(Arc<T>);
+pub struct Data<T>(Arc<Mutex<T>>);
 
 impl<T> Data<T> {
     /// Creates a new `Data` instance wrapping the provided state
@@ -51,26 +58,79 @@ impl<T> Data<T> {
     /// let state = Data::new(String::from("hello"));
     /// ```
     pub fn new(state: T) -> Data<T> {
-        Data(Arc::new(state))
+        Data(Arc::new(Mutex::new(state)))
     }
-}
 
-impl<T: ?Sized> Data<T> {
-    /// Returns a reference to the wrapped state
+    /// Gets a clone of the current state value
     ///
     /// # Returns
     ///
-    /// A reference to the inner value
-    pub fn get_ref(&self) -> &T {
-        self.0.as_ref()
+    /// A clone of the inner value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let state = Data::new(String::from("hello"));
+    /// async {
+    ///     let value = state.clone_inner().await;
+    ///     assert_eq!(value, "hello");
+    /// };
+    /// ```
+    pub async fn clone_inner(&self) -> T 
+    where 
+        T: Clone,
+    {
+        self.0.lock().await.clone()
     }
 
-    /// Unwraps the Data wrapper, returning the internal Arc
+    /// Updates the state using a closure
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that receives a mutable reference to the state
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let state = Data::new(String::from("hello"));
+    /// async {
+    ///     state.update(|s| s.push_str(" world")).await;
+    ///     assert_eq!(state.clone_inner().await, "hello world");
+    /// };
+    /// ```
+    pub async fn update<F>(&self, f: F)
+    where
+        F: FnOnce(&mut T),
+    {
+        let mut lock = self.0.lock().await;
+        f(&mut *lock);
+    }
+
+    /// Sets the state to a new value
+    ///
+    /// # Arguments
+    ///
+    /// * `new_state` - The new state value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let state = Data::new(String::from("hello"));
+    /// async {
+    ///     state.set(String::from("world")).await;
+    ///     assert_eq!(state.clone_inner().await, "world");
+    /// };
+    /// ```
+    pub async fn set(&self, new_state: T) {
+        *self.0.lock().await = new_state;
+    }
+
+    /// Unwraps the Data wrapper, returning the internal Arc<Mutex>
     ///
     /// # Returns
     ///
-    /// The underlying Arc<T>
-    pub fn into_inner(self) -> Arc<T> {
+    /// The underlying Arc<Mutex<T>>
+    pub fn into_inner(self) -> Arc<Mutex<T>> {
         self.0
     }
 }
@@ -79,17 +139,10 @@ impl<T: ?Sized> Data<T> {
 ///
 /// This implementation enables using methods from [Arc] directly on `Data<T>` instances
 /// through deref coercion.
-///
-/// # Examples
-///
-/// ```rust
-/// let data = Data::new(String::from("hello"));
-/// assert_eq!(data.strong_count(), 1); // Calls Arc::strong_count through deref
-/// ```
-impl<T: ?Sized> Deref for Data<T> {
-    type Target = Arc<T>;
+impl<T> Deref for Data<T> {
+    type Target = Arc<Mutex<T>>;
 
-    fn deref(&self) -> &Arc<T> {
+    fn deref(&self) -> &Arc<Mutex<T>> {
         &self.0
     }
 }
@@ -98,53 +151,18 @@ impl<T: ?Sized> Deref for Data<T> {
 ///
 /// This implementation only clones the [Arc] pointer, not the underlying data,
 /// making it very efficient.
-///
-/// # Examples
-///
-/// ```rust
-/// let data = Data::new(String::from("hello"));
-/// let cloned = data.clone();
-/// assert_eq!(data.strong_count(), 2);
-/// ```
-impl<T: ?Sized> Clone for Data<T> {
+impl<T> Clone for Data<T> {
     fn clone(&self) -> Data<T> {
         Data(Arc::clone(&self.0))
     }
 }
 
-/// Additional functionality for `Data<T>` when T implements [Clone]
-impl<T: Clone + ?Sized> Data<T> {
-    /// Returns a cloned value of the inner `T`
-    ///
-    /// Unlike [Clone::clone], this method clones the actual data inside the [Arc],
-    /// not just the reference counting wrapper.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let data = Data::new(String::from("hello"));
-    /// let value = data.get_value();
-    /// assert_eq!(value, "hello");
-    /// ```
-    pub fn get_value(&self) -> T {
-        (*self.0).clone()
-    }
-}
-
-/// Implements conversion from [Arc] to `Data<T>`
+/// Implements conversion from Arc<Mutex> to `Data<T>`
 ///
-/// This allows creating a `Data<T>` instance from an existing [Arc],
-/// which is useful when integrating with other code that uses [Arc] directly.
-///
-/// # Examples
-///
-/// ```rust
-/// let arc = Arc::new(String::from("hello"));
-/// let data: Data<String> = Data::from(arc);
-/// assert_eq!(data.get_ref(), "hello");
-/// ```
-impl<T: ?Sized> From<Arc<T>> for Data<T> {
-    fn from(arc: Arc<T>) -> Self {
+/// This allows creating a `Data<T>` instance from an existing Arc<Mutex>,
+/// which is useful when integrating with other code that uses Arc<Mutex> directly.
+impl<T> From<Arc<Mutex<T>>> for Data<T> {
+    fn from(arc: Arc<Mutex<T>>) -> Self {
         Data(arc)
     }
 }
@@ -154,7 +172,6 @@ impl<T: ?Sized> From<Arc<T>> for Data<T> {
 /// Used when an operation doesn't require any state parameters.
 #[derive(Default, Clone)]
 pub struct NoData;
-
 
 /// Converts stored states into function parameters
 ///
@@ -188,7 +205,7 @@ macro_rules! impl_into_function_params {
         impl<$T, F> IntoFunctionParams<F> for Data<$T>
         where
             F: FunctionSignature<Params = Data<$T>>,
-            $T: Clone + 'static,
+            $T: Clone + Send + 'static,
         {
             fn into_params(self) -> F::Params {
                 self
@@ -201,7 +218,7 @@ macro_rules! impl_into_function_params {
         impl<$($T,)+ F> IntoFunctionParams<F> for ($(Data<$T>,)+)
         where
             F: FunctionSignature<Params = ($(Data<$T>,)+)>,
-            $($T: Clone + 'static,)+
+            $($T: Clone + Send + 'static,)+
         {
             fn into_params(self) -> F::Params {
                 self
@@ -210,18 +227,12 @@ macro_rules! impl_into_function_params {
     };
 }
 
-// The following implementations are generated:
-//
-// - NoData -> ()
-// - Data<T> -> Data<T>
-// - (Data<T1>, Data<T2>) -> (Data<T1>, Data<T2>)
-// - (Data<T1>, Data<T2>, Data<T3>) -> (Data<T1>, Data<T2>, Data<T3>)
-// - (Data<T1>, Data<T2>, Data<T3>, Data<T4>) -> (Data<T1>, Data<T2>, Data<T3>, Data<T4>)
-impl_into_function_params!();                          // 0 parameters
-impl_into_function_params!(S1);                      // 1 parameter
-impl_into_function_params!(S1, S2);                // 2 parameters
-impl_into_function_params!(S1, S2, S3);          // 3 parameters
-impl_into_function_params!(S1, S2, S3, S4);    // 4 parameters
+// Implementation for different parameter counts
+impl_into_function_params!();
+impl_into_function_params!(S1);
+impl_into_function_params!(S1, S2);
+impl_into_function_params!(S1, S2, S3);
+impl_into_function_params!(S1, S2, S3, S4);
 
 #[cfg(test)]
 mod tests {
@@ -230,12 +241,54 @@ mod tests {
 
     #[derive(Clone)]
     struct User {
-        _name: String,
+        name: String,
     }
 
     #[derive(Clone)]
     struct Config {
-        _timeout: Duration,
+        timeout: Duration,
+    }
+
+    #[tokio::test]
+    async fn test_state_operations() {
+        // Test basic state operations
+        let state = Data::new(User { name: "Alice".to_string() });
+        assert_eq!(state.clone_inner().await.name, "Alice");
+
+        state.update(|user| user.name = "Bob".to_string()).await;
+        assert_eq!(state.clone_inner().await.name, "Bob");
+
+        state.set(User { name: "Charlie".to_string() }).await;
+        assert_eq!(state.clone_inner().await.name, "Charlie");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_states() {
+        let user_state = Data::new(User { name: "Alice".to_string() });
+        let config_state = Data::new(Config { timeout: Duration::from_secs(30) });
+
+        // Test concurrent access
+        let user_clone = user_state.clone();
+        let config_clone = config_state.clone();
+
+        let handle = tokio::spawn(async move {
+            user_clone.update(|user| user.name = "Bob".to_string()).await;
+            config_clone.update(|config| config.timeout = Duration::from_secs(60)).await;
+        });
+
+        // Meanwhile, read from the original references
+        let user = user_state.clone_inner().await;
+        let config = config_state.clone_inner().await;
+
+        // Verify initial state
+        assert_eq!(user.name, "Alice");
+        assert_eq!(config.timeout, Duration::from_secs(30));
+
+        handle.await.unwrap();
+
+        // Verify updates
+        assert_eq!(user_state.clone_inner().await.name, "Bob");
+        assert_eq!(config_state.clone_inner().await.timeout, Duration::from_secs(60));
     }
 
     #[test]
@@ -245,12 +298,12 @@ mod tests {
         let _: () = <NoData as IntoFunctionParams<fn() -> std::future::Ready<()>>>::into_params(no_state);
 
         // Test single state
-        let state = Data::new(User { _name: "Alice".to_string() });
+        let state = Data::new(User { name: "Alice".to_string() });
         let _: Data<User> = <Data<User> as IntoFunctionParams<fn(Data<User>) -> std::future::Ready<Data<User>>>>::into_params(state);
 
         // Test two states
-        let user_state = Data::new(User { _name: "Bob".to_string() });
-        let config_state = Data::new(Config { _timeout: Duration::from_secs(30) });
+        let user_state = Data::new(User { name: "Bob".to_string() });
+        let config_state = Data::new(Config { timeout: Duration::from_secs(30) });
         let states = (user_state, config_state);
         let _: (Data<User>, Data<Config>) = <(Data<User>, Data<Config>) as IntoFunctionParams<fn((Data<User>, Data<Config>)) -> std::future::Ready<(Data<User>, Data<Config>)>>>::into_params(states);
     }

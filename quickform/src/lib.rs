@@ -282,14 +282,16 @@ mod tests {
     #[tokio::test]
     async fn test_from_dir() {
         async fn double_age(user: Data<User>) -> User {
+            let user = user.clone_inner().await;
             User {
-                name: user.name.clone(),
+                name: user.name,
                 age: user.age * 2,
             }
         }
 
         async fn codify_name(user: Data<User>) -> User {
-            let new_name = user.name.clone().into_bytes().iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join("-");
+            let user = user.clone_inner().await;
+            let new_name = user.name.into_bytes().iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join("-");
             User {
                 name: new_name,
                 age: user.age,
@@ -327,6 +329,8 @@ mod tests {
             user: Data<User>,
             config: Data<Config>
         ) -> (String, Duration) {
+            let user = user.clone_inner().await;
+            let config = config.clone_inner().await;
             (user.name.clone(), config.timeout)
         }
 
@@ -352,7 +356,10 @@ mod tests {
     #[tokio::test]
     async fn test_simple_params() {
         async fn three_params(x: Data<i32>, y: Data<i32>, z: Data<i32>) -> i32 {
-            x.get_ref() + y.get_ref() + z.get_ref()
+            let x = x.clone_inner().await;
+            let y = y.clone_inner().await;
+            let z = z.clone_inner().await;
+            x + y + z
         }
 
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
