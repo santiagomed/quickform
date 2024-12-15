@@ -29,10 +29,10 @@
 //! };
 //! ```
 
-use std::sync::Arc;
-use std::ops::Deref;
-use tokio::sync::Mutex;
 use crate::operation::FunctionSignature;
+use std::ops::Deref;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Thread-safe wrapper for mutable state data
 ///
@@ -76,8 +76,8 @@ impl<T> Data<T> {
     ///     assert_eq!(value, "hello");
     /// };
     /// ```
-    pub async fn clone_inner(&self) -> T 
-    where 
+    pub async fn clone_inner(&self) -> T
+    where
         T: Clone,
     {
         self.0.lock().await.clone()
@@ -190,7 +190,7 @@ pub trait IntoFunctionParams<F: FunctionSignature> {
 macro_rules! impl_into_function_params {
     // Base case with no parameters
     () => {
-        impl<F> IntoFunctionParams<F> for NoData 
+        impl<F> IntoFunctionParams<F> for NoData
         where
             F: FunctionSignature<Params = ()>
         {
@@ -252,28 +252,42 @@ mod tests {
     #[tokio::test]
     async fn test_state_operations() {
         // Test basic state operations
-        let state = Data::new(User { name: "Alice".to_string() });
+        let state = Data::new(User {
+            name: "Alice".to_string(),
+        });
         assert_eq!(state.clone_inner().await.name, "Alice");
 
         state.update(|user| user.name = "Bob".to_string()).await;
         assert_eq!(state.clone_inner().await.name, "Bob");
 
-        state.set(User { name: "Charlie".to_string() }).await;
+        state
+            .set(User {
+                name: "Charlie".to_string(),
+            })
+            .await;
         assert_eq!(state.clone_inner().await.name, "Charlie");
     }
 
     #[tokio::test]
     async fn test_multiple_states() {
-        let user_state = Data::new(User { name: "Alice".to_string() });
-        let config_state = Data::new(Config { timeout: Duration::from_secs(30) });
+        let user_state = Data::new(User {
+            name: "Alice".to_string(),
+        });
+        let config_state = Data::new(Config {
+            timeout: Duration::from_secs(30),
+        });
 
         // Test concurrent access
         let user_clone = user_state.clone();
         let config_clone = config_state.clone();
 
         let handle = tokio::spawn(async move {
-            user_clone.update(|user| user.name = "Bob".to_string()).await;
-            config_clone.update(|config| config.timeout = Duration::from_secs(60)).await;
+            user_clone
+                .update(|user| user.name = "Bob".to_string())
+                .await;
+            config_clone
+                .update(|config| config.timeout = Duration::from_secs(60))
+                .await;
         });
 
         // Meanwhile, read from the original references
@@ -288,23 +302,37 @@ mod tests {
 
         // Verify updates
         assert_eq!(user_state.clone_inner().await.name, "Bob");
-        assert_eq!(config_state.clone_inner().await.timeout, Duration::from_secs(60));
+        assert_eq!(
+            config_state.clone_inner().await.timeout,
+            Duration::from_secs(60)
+        );
     }
 
     #[test]
     fn test_into_params() {
         // Test NoData
         let no_state = NoData;
-        let _: () = <NoData as IntoFunctionParams<fn() -> std::future::Ready<()>>>::into_params(no_state);
+        let _: () =
+            <NoData as IntoFunctionParams<fn() -> std::future::Ready<()>>>::into_params(no_state);
 
         // Test single state
-        let state = Data::new(User { name: "Alice".to_string() });
-        let _: Data<User> = <Data<User> as IntoFunctionParams<fn(Data<User>) -> std::future::Ready<Data<User>>>>::into_params(state);
+        let state = Data::new(User {
+            name: "Alice".to_string(),
+        });
+        let _: Data<User> = <Data<User> as IntoFunctionParams<
+            fn(Data<User>) -> std::future::Ready<Data<User>>,
+        >>::into_params(state);
 
         // Test two states
-        let user_state = Data::new(User { name: "Bob".to_string() });
-        let config_state = Data::new(Config { timeout: Duration::from_secs(30) });
+        let user_state = Data::new(User {
+            name: "Bob".to_string(),
+        });
+        let config_state = Data::new(Config {
+            timeout: Duration::from_secs(30),
+        });
         let states = (user_state, config_state);
-        let _: (Data<User>, Data<Config>) = <(Data<User>, Data<Config>) as IntoFunctionParams<fn((Data<User>, Data<Config>)) -> std::future::Ready<(Data<User>, Data<Config>)>>>::into_params(states);
+        let _: (Data<User>, Data<Config>) = <(Data<User>, Data<Config>) as IntoFunctionParams<
+            fn((Data<User>, Data<Config>)) -> std::future::Ready<(Data<User>, Data<Config>)>,
+        >>::into_params(states);
     }
 }

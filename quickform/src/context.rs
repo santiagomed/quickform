@@ -11,7 +11,7 @@ use serde::Serialize;
 ///
 /// ```rust
 /// use serde::Serialize;
-/// 
+///
 /// #[derive(Serialize)]
 /// struct User {
 ///     name: String,

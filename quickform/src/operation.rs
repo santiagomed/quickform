@@ -43,7 +43,7 @@ pub trait FunctionSignature {
 pub trait Operation<F: FunctionSignature> {
     /// The future type returned by this operation
     type Future: Future<Output = F::Output>;
-    
+
     /// Invokes the operation with the given parameters
     ///
     /// # Arguments
@@ -60,7 +60,7 @@ pub trait Operation<F: FunctionSignature> {
 macro_rules! impl_function_traits {
     // Base case with no parameters
     () => {
-        impl<Fut, Out> FunctionSignature for fn() -> Fut 
+        impl<Fut, Out> FunctionSignature for fn() -> Fut
         where
             Fut: Future<Output = Out>
         {
@@ -82,7 +82,7 @@ macro_rules! impl_function_traits {
 
     // Case for 1 parameter
     (($T:ident, $idx:tt)) => {
-        impl<$T, Fut, Out> FunctionSignature for fn($T) -> Fut 
+        impl<$T, Fut, Out> FunctionSignature for fn($T) -> Fut
         where
             Fut: Future<Output = Out>
         {
@@ -104,7 +104,7 @@ macro_rules! impl_function_traits {
 
     // Case for N parameters
     ($(($T:ident, $idx:tt)),+) => {
-        impl<$($T,)+ Fut, Out> FunctionSignature for fn($($T),+) -> Fut 
+        impl<$($T,)+ Fut, Out> FunctionSignature for fn($($T),+) -> Fut
         where
             Fut: Future<Output = Out>
         {
@@ -126,10 +126,10 @@ macro_rules! impl_function_traits {
 }
 
 // Generate implementations for different arities
-impl_function_traits!();                                    // 0 parameters
-impl_function_traits!((T1, p1));                           // 1 parameter
-impl_function_traits!((T1, p1), (T2, p2));                 // 2 parameters
-impl_function_traits!((T1, p1), (T2, p2), (T3, p3));      // 3 parameters
+impl_function_traits!(); // 0 parameters
+impl_function_traits!((T1, p1)); // 1 parameter
+impl_function_traits!((T1, p1), (T2, p2)); // 2 parameters
+impl_function_traits!((T1, p1), (T2, p2), (T3, p3)); // 3 parameters
 impl_function_traits!((T1, p1), (T2, p2), (T3, p3), (T4, p4)); // 4 parameters
 
 #[cfg(test)]
@@ -138,10 +138,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_different_arities() {
-        async fn no_params() -> i32 { 42 }
-        async fn one_param(x: i32) -> i32 { x + 1 }
-        async fn two_params(x: i32, y: i32) -> i32 { x + y }
-        async fn three_params(x: i32, y: i32, z: i32) -> i32 { x + y + z }
+        async fn no_params() -> i32 {
+            42
+        }
+        async fn one_param(x: i32) -> i32 {
+            x + 1
+        }
+        async fn two_params(x: i32, y: i32) -> i32 {
+            x + y
+        }
+        async fn three_params(x: i32, y: i32, z: i32) -> i32 {
+            x + y + z
+        }
 
         let _f0: fn() -> _ = no_params;
         let _f1: fn(i32) -> _ = one_param;

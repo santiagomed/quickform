@@ -191,7 +191,6 @@ impl MemFS {
         path: P,
     ) -> Result<(), FSError> {
         let path = path.as_ref();
-
         for entry in fs::read_dir(path).map_err(|e| FSError::NotFound(e.to_string()))? {
             let entry = entry.map_err(|e| FSError::NotFound(e.to_string()))?;
             let file_type = entry
@@ -268,7 +267,7 @@ mod tests {
         fs::write(nested_dir.join("file2.txt"), "World").unwrap();
 
         // Read the directory into our virtual filesystem
-        let fs = MemFS::read_from_disk(base_path)?;
+        let fs = MemFS::read_from_disk(&base_path)?;
 
         // Verify the structure (order doesn't matter)
         let mut root_contents = fs.list_dir("")?;

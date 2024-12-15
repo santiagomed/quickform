@@ -1,5 +1,5 @@
 //! QuickForm: A flexible templating and operation execution framework
-//! 
+//!
 //! This library provides a type-safe, state-aware templating system that can execute
 //! async operations and render their results using templates. It's designed to be
 //! flexible and extensible while maintaining strong type safety.
@@ -44,30 +44,32 @@
 //!   - `NoData`: For apps with no state
 //!   - `Data<S>`: For apps with a single state type
 //!   - `(Data<S1>, Data<S2>, ...)`: For apps with multiple state types
-mod operation;
-mod state;
 mod context;
 mod error;
 mod fs;
+mod loader;
+mod operation;
+mod state;
 mod template;
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::path::Path;
+use std::pin::Pin;
 
-use fs::MemFS;
-use template::TemplateEngine;
-use operation::{FunctionSignature, Operation};
-use state::{Data, NoData, IntoFunctionParams};
 use context::Context;
 use error::Error;
+use fs::MemFS;
+use operation::{FunctionSignature, Operation};
+use state::{Data, IntoFunctionParams, NoData};
+use template::TemplateEngine;
 
 /// A type alias for Results returned by this library
 type Result<T> = std::result::Result<T, Error>;
 
 /// A boxed operation that can be executed asynchronously
-type BoxedOperation = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
+type BoxedOperation =
+    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
 
 /// The main application struct that manages state, operations, and template rendering
 ///
@@ -82,24 +84,19 @@ pub struct App<T> {
     engine: TemplateEngine<'static>,
 }
 
-impl App<NoData> {
-    /// Creates a new App instance with no state
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let app = App::new();
-    /// ```
-    pub fn new() -> Self {
+impl Default for App<NoData> {
+    fn default() -> Self {
         Self {
-            state: NoData,  
+            state: NoData,
             operations: HashMap::new(),
             paths: Vec::new(),
             fs: MemFS::new(),
             engine: TemplateEngine::new(),
         }
     }
+}
 
+impl App<NoData> {
     /// Configures the app with templates from a directory
     ///
     /// # Arguments
@@ -109,15 +106,14 @@ impl App<NoData> {
     /// # Returns
     ///
     /// * `Result<Self>` - The configured App or an error if template loading fails
-    pub fn with_templates<P: AsRef<Path>>(self, template_dir: P) -> Result<Self> {
-        let engine = TemplateEngine::with_dir(template_dir);
-        Ok(Self {
-            state: NoData,
-            operations: self.operations,
-            paths: self.paths,
-            fs: self.fs,
+    pub fn from_dir<P: AsRef<Path>>(template_dir: P) -> Self {
+        let engine = TemplateEngine::from_dir(&template_dir);
+        let fs = MemFS::read_from_disk(&template_dir).unwrap_or_default();
+        Self {
             engine,
-        })
+            fs,
+            ..Self::default()
+        }
     }
 
     /// Adds state to the application
@@ -188,7 +184,7 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     /// # Returns
     ///
     /// The App instance with the new operation registered
-    pub fn operation<FSig, F>(mut self, name: &str, operation: F) -> Self 
+    pub fn operation<FSig, F>(mut self, name: &str, operation: F) -> Self
     where
         FSig: FunctionSignature + 'static,
         F: Operation<FSig> + Copy + Send + Sync + 'static,
@@ -206,7 +202,8 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
             }) as Pin<Box<dyn Future<Output = _> + Send>>
         };
 
-        self.operations.insert(name.to_string(), Box::new(wrapped_op));
+        self.operations
+            .insert(name.to_string(), Box::new(wrapped_op));
         self.paths.push(name.to_string());
         self
     }
@@ -222,7 +219,7 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
         }
         Ok(())
     }
-    
+
     /// Renders a single operation by name
     ///
     /// # Arguments
@@ -239,7 +236,10 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
             let rendered = self.engine.render(name, &context)?;
             Ok(rendered)
         } else {
-            Err(Error::IOError(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Operation not found: {}", name))))
+            Err(Error::IOError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Operation not found: {}", name),
+            )))
         }
     }
 }
@@ -270,12 +270,10 @@ mod tests {
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
         let template_path = tmp_dir.path().join("get_default.jinja");
         std::fs::write(&template_path, "{{ context }}").unwrap();
-        let full_path = template_path.to_str().unwrap();
 
-        let app = App::new()
-            .operation(full_path, get_default_name);
+        let app = App::from_dir(&tmp_dir.path()).operation("get_default.jinja", get_default_name);
 
-        let result = app.render(full_path).await.unwrap();
+        let result = app.render("get_default.jinja").await.unwrap();
         assert_eq!(result, "Default");
     }
 
@@ -291,7 +289,13 @@ mod tests {
 
         async fn codify_name(user: Data<User>) -> User {
             let user = user.clone_inner().await;
-            let new_name = user.name.into_bytes().iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join("-");
+            let new_name = user
+                .name
+                .into_bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<String>>()
+                .join("-");
             User {
                 name: new_name,
                 age: user.age,
@@ -299,20 +303,18 @@ mod tests {
         }
 
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
-        
+
         // Create child directory
         let child_dir = tmp_dir.path().join("child");
         std::fs::create_dir(&child_dir).unwrap();
-        
+
         let template_path_double_age = tmp_dir.path().join("double_age.jinja");
         let template_path_codify_name = child_dir.join("codify_name.jinja");
-        
+
         std::fs::write(&template_path_double_age, "Age: {{ age }}").unwrap();
         std::fs::write(&template_path_codify_name, "Name: {{ name }}").unwrap();
-        
-        let app = App::new()
-            .with_templates(tmp_dir.path())
-            .unwrap()
+
+        let app = App::from_dir(&tmp_dir.path())
             .with_state(User {
                 name: "Alice".to_string(),
                 age: 30,
@@ -327,7 +329,7 @@ mod tests {
     async fn test_multiple_params() {
         async fn get_user_with_timeout(
             user: Data<User>,
-            config: Data<Config>
+            config: Data<Config>,
         ) -> (String, Duration) {
             let user = user.clone_inner().await;
             let config = config.clone_inner().await;
@@ -339,7 +341,7 @@ mod tests {
         std::fs::write(&template_path, "{{ context[0] }}").unwrap();
         let full_path = template_path.to_str().unwrap();
 
-        let app = App::new()
+        let app = App::from_dir(&tmp_dir.path())
             .with_state(User {
                 name: "Bob".to_string(),
                 age: 25,
@@ -365,15 +367,14 @@ mod tests {
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
         let template_path = tmp_dir.path().join("simple_params.jinja");
         std::fs::write(&template_path, "{{ context }}").unwrap();
-        let full_path = template_path.to_str().unwrap();
 
-        let app = App::new()
+        let app = App::from_dir(&tmp_dir.path())
             .with_state(1)
             .with_state(2)
             .with_state(3)
-            .operation(full_path, three_params);
+            .operation("simple_params.jinja", three_params);
 
-        let result = app.render(full_path).await.unwrap();
+        let result = app.render("simple_params.jinja").await.unwrap();
         assert_eq!(result, "6");
     }
 }
