@@ -3,7 +3,7 @@ use minijinja::Error;
 use std::str;
 
 /// Creates a template loader that loads templates from the MemFS.
-pub fn memfs_loader(fs: &'static MemFS) -> impl Fn(&str) -> Result<Option<String>, Error> {
+pub fn memfs_loader(fs: MemFS) -> impl Fn(&str) -> Result<Option<String>, Error> {
     move |name| {
         match fs.read_file(name) {
             Ok(content) => {

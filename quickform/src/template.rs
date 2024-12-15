@@ -2,7 +2,6 @@ use crate::fs::MemFS;
 use crate::loader::memfs_loader;
 use minijinja::Environment;
 use serde::Serialize;
-use std::path::Path;
 
 pub(crate) struct TemplateEngine<'a> {
     env: Environment<'a>,
@@ -16,15 +15,8 @@ impl<'a> TemplateEngine<'a> {
         }
     }
 
-    /// Creates a new template engine instance from a directory path
-    pub(crate) fn from_dir<P: AsRef<Path>>(template_dir: P) -> Self {
-        let mut env = Environment::new();
-        env.set_loader(minijinja::path_loader(template_dir));
-        Self { env }
-    }
-
     /// Creates a new template engine instance from a MemFS
-    pub(crate) fn from_memfs(fs: &'static MemFS) -> Self {
+    pub(crate) fn from_memfs(fs: MemFS) -> Self {
         let mut env = Environment::new();
         env.set_loader(memfs_loader(fs));
         Self { env }

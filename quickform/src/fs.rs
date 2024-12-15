@@ -21,14 +21,14 @@ pub enum FSError {
 }
 
 // Represents either a file or directory
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum FSNode {
     File(FileNode),
     Directory(DirectoryNode),
 }
 
 // Represents a file and its contents
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct FileNode {
     content: Vec<u8>,
     #[allow(unused)]
@@ -38,7 +38,7 @@ pub(crate) struct FileNode {
 }
 
 // Represents a directory and its children
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DirectoryNode {
     children: HashMap<String, FSNode>,
     #[allow(unused)]
@@ -46,7 +46,7 @@ struct DirectoryNode {
 }
 
 // Main filesystem structure
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MemFS {
     root: DirectoryNode,
 }

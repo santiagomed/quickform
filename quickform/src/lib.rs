@@ -56,6 +56,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
+use serde::Serialize;
 
 use context::Context;
 use error::Error;
@@ -107,8 +108,8 @@ impl App<NoData> {
     ///
     /// * `Result<Self>` - The configured App or an error if template loading fails
     pub fn from_dir<P: AsRef<Path>>(template_dir: P) -> Self {
-        let engine = TemplateEngine::from_dir(&template_dir);
-        let fs = MemFS::read_from_disk(&template_dir).unwrap_or_default();
+        let fs = MemFS::read_from_disk(template_dir).unwrap_or_default();
+        let engine = TemplateEngine::from_memfs(fs.clone());
         Self {
             engine,
             fs,
@@ -189,7 +190,7 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
         FSig: FunctionSignature + 'static,
         F: Operation<FSig> + Copy + Send + Sync + 'static,
         F::Future: Send + 'static,
-        FSig::Output: Context,
+        FSig::Output: Serialize,
         T: IntoFunctionParams<FSig>,
     {
         let state = self.state.clone();
@@ -230,7 +231,6 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     ///
     /// * `Result<String>` - The rendered result or an error
     async fn render(&self, name: &str) -> Result<String> {
-        println!("Rendering {}", name);
         if let Some(op) = self.operations.get(name) {
             let context = op().await.to_value();
             let rendered = self.engine.render(name, &context)?;
@@ -263,13 +263,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_params() {
-        async fn get_default_name() -> String {
-            "Default".to_string()
+        async fn get_default_name() -> HashMap<String, String> {
+            let mut map = HashMap::new();
+            map.insert("value".to_string(), "Default".to_string());
+            map
         }
 
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
         let template_path = tmp_dir.path().join("get_default.jinja");
-        std::fs::write(&template_path, "{{ context }}").unwrap();
+        std::fs::write(&template_path, "{{ value }}").unwrap();
 
         let app = App::from_dir(&tmp_dir.path()).operation("get_default.jinja", get_default_name);
 
@@ -330,16 +332,16 @@ mod tests {
         async fn get_user_with_timeout(
             user: Data<User>,
             config: Data<Config>,
-        ) -> (String, Duration) {
-            let user = user.clone_inner().await;
-            let config = config.clone_inner().await;
-            (user.name.clone(), config.timeout)
+        ) -> HashMap<String, String> {
+            let mut map = HashMap::new();
+            map.insert("user".to_string(), user.clone_inner().await.name);
+            map.insert("timeout".to_string(), config.clone_inner().await.timeout.as_secs().to_string());
+            map
         }
 
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
         let template_path = tmp_dir.path().join("multiple_params.jinja");
-        std::fs::write(&template_path, "{{ context[0] }}").unwrap();
-        let full_path = template_path.to_str().unwrap();
+        std::fs::write(&template_path, "{{ timeout }} {{ user }}").unwrap();
 
         let app = App::from_dir(&tmp_dir.path())
             .with_state(User {
@@ -349,24 +351,26 @@ mod tests {
             .with_state(Config {
                 timeout: Duration::from_secs(30),
             })
-            .operation(full_path, get_user_with_timeout);
+            .operation("multiple_params.jinja", get_user_with_timeout);
 
-        let result = app.render(full_path).await.unwrap();
-        assert_eq!(result, "Bob");
+        let result = app.render("multiple_params.jinja").await.unwrap();
+        assert_eq!(result, "30 Bob");
     }
 
     #[tokio::test]
     async fn test_simple_params() {
-        async fn three_params(x: Data<i32>, y: Data<i32>, z: Data<i32>) -> i32 {
+        async fn three_params(x: Data<i32>, y: Data<i32>, z: Data<i32>) -> HashMap<String, i32> {
             let x = x.clone_inner().await;
             let y = y.clone_inner().await;
             let z = z.clone_inner().await;
-            x + y + z
+            let mut map = HashMap::new();
+            map.insert("sum".to_string(), x + y + z);
+            map
         }
 
         let tmp_dir = tempdir::TempDir::new("test").unwrap();
         let template_path = tmp_dir.path().join("simple_params.jinja");
-        std::fs::write(&template_path, "{{ context }}").unwrap();
+        std::fs::write(&template_path, "{{ sum }}").unwrap();
 
         let app = App::from_dir(&tmp_dir.path())
             .with_state(1)

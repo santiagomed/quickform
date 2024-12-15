@@ -27,7 +27,7 @@ use serde::Serialize;
 /// let template_value = user.to_value();
 /// ```
 pub trait Context {
-    /// Converts the implementing type into a minijinja [Value]
+    /// Copies the implementing type into a minijinja [Value]
     fn to_value(&self) -> Value;
 }
 
