@@ -1,6 +1,3 @@
-Here's a README.md for the QuickForm library:
-
-```markdown
 # QuickForm
 
 QuickForm is a flexible templating and operation execution framework for Rust that provides a type-safe, state-aware system for executing async operations and rendering their results using templates.
