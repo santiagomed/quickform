@@ -1,9 +1,58 @@
+//! In-memory filesystem implementation for template management
+//!
+//! This module provides a virtual filesystem that can:
+//! - Load templates from disk into memory
+//! - Manage an in-memory hierarchy of files and directories
+//! - Write generated content back to disk
+//!
+//! # Architecture
+//!
+//! The filesystem is structured as a tree where:
+//! - `MemFS` is the root container
+//! - `DirectoryNode` represents directories containing other nodes
+//! - `FileNode` represents files containing raw bytes
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use quickform::fs::MemFS;
+//!
+//! // Create a new filesystem
+//! let mut fs = MemFS::new();
+//!
+//! // Create directories and files
+//! fs.create_dir("templates").unwrap();
+//! fs.write_file("templates/hello.txt", b"Hello, World!".to_vec()).unwrap();
+//!
+//! // Read file contents
+//! let content = fs.read_file("templates/hello.txt").unwrap();
+//!
+//! // Write entire filesystem to disk
+//! fs.write_to_disk("output/").unwrap();
+//! ```
+//!
+//! # Error Handling
+//!
+//! Operations that can fail return a `Result<T, FSError>` where `FSError`
+//! encompasses various failure modes like:
+//! - Invalid paths
+//! - Missing files or directories
+//! - Permission issues
+//! - I/O errors
+//!
+//! # Implementation Details
+//!
+//! The filesystem maintains creation and modification timestamps for all nodes,
+//! supports nested directory structures, and handles both binary and text files.
+//! All paths use forward slashes (`/`) as separators regardless of the host OS.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
+/// Error types specific to filesystem operations
 #[derive(Error, Debug)]
 pub enum FSError {
     #[error("Invalid path")]
@@ -20,38 +69,47 @@ pub enum FSError {
     IOError(#[from] std::io::Error),
 }
 
-// Represents either a file or directory
+/// An in-memory representation of a file or directory node
 #[derive(Debug, Clone)]
 enum FSNode {
     File(FileNode),
     Directory(DirectoryNode),
 }
 
-// Represents a file and its contents
+/// Represents a file in the in-memory filesystem
 #[derive(Debug, Clone)]
 pub(crate) struct FileNode {
+    /// Raw content of the file
     content: Vec<u8>,
+    /// Unix timestamp of when the file was created
     #[allow(unused)]
     created: u64,
+    /// Unix timestamp of when the file was last modified
     #[allow(unused)]
     modified: u64,
 }
 
-// Represents a directory and its children
+/// Represents a directory in the in-memory filesystem
 #[derive(Debug, Clone)]
 struct DirectoryNode {
+    /// Map of child node names to their contents
     children: HashMap<String, FSNode>,
+    /// Unix timestamp of when the directory was created
     #[allow(unused)]
     created: u64,
 }
 
-// Main filesystem structure
+/// An in-memory filesystem that can be read from and written to disk
+/// 
+/// This struct provides a virtual filesystem that can be used to manage
+/// templates and generated files in memory before writing them to disk.
 #[derive(Debug, Clone)]
 pub(crate) struct MemFS {
     root: DirectoryNode,
 }
 
 impl MemFS {
+    /// Creates a new empty filesystem
     pub(crate) fn new() -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -66,13 +124,30 @@ impl MemFS {
         }
     }
 
-    /// Reads a real directory from the filesystem into memory
+    /// Reads an entire directory structure from disk into memory
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the directory to read
+    ///
+    /// # Returns
+    ///
+    /// A new MemFS instance containing the directory structure
     pub(crate) fn read_from_disk<P: AsRef<Path>>(path: P) -> Result<Self, FSError> {
         let mut fs = MemFS::new();
         fs.read_directory_recursive("", path)?;
         Ok(fs)
     }
 
+    /// Writes a file to the specified path in the filesystem
+    ///
+    /// Creates parent directories as needed. If the file already exists,
+    /// it will be overwritten.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path where the file should be written
+    /// * `content` - Raw content to write to the file
     pub(crate) fn write_file(&mut self, path: &str, content: Vec<u8>) -> Result<(), FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
@@ -116,7 +191,14 @@ impl MemFS {
         Ok(())
     }
 
-    // Create a new directory at the specified path
+    /// Creates a new directory at the specified path
+    ///
+    /// Creates parent directories as needed. Returns an error if the path
+    /// already exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path where the directory should be created
     pub(crate) fn create_dir(&mut self, path: &str) -> Result<(), FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
@@ -134,6 +216,12 @@ impl MemFS {
         )
     }
 
+    /// Creates a new node (file or directory) at the specified path
+    ///
+    /// # Arguments
+    ///
+    /// * `components` - Path components leading to the node location
+    /// * `node` - The node to create
     fn create_node(&mut self, components: &[&str], node: FSNode) -> Result<(), FSError> {
         let mut current = &mut self.root;
 
@@ -168,7 +256,15 @@ impl MemFS {
         Ok(())
     }
 
-    // Read a file's contents
+    /// Reads the contents of a file at the specified path
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file to read
+    ///
+    /// # Returns
+    ///
+    /// The raw contents of the file
     pub(crate) fn read_file(&self, path: &str) -> Result<&Vec<u8>, FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
@@ -187,7 +283,16 @@ impl MemFS {
         Err(FSError::NotFound(format!("Path not found: {}", path)))
     }
 
-    // List contents of a directory
+    /// Lists the contents of a directory
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the directory to list
+    ///
+    /// # Returns
+    ///
+    /// A vector of names of the directory's contents
+    #[allow(unused)]
     pub(crate) fn list_dir(&self, path: &str) -> Result<Vec<String>, FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
@@ -208,7 +313,12 @@ impl MemFS {
         Ok(current.children.keys().cloned().collect())
     }
 
-    /// Reads a real directory from the filesystem into memory
+    /// Recursively reads a directory from disk into memory
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Virtual path prefix for the current directory
+    /// * `path` - Physical path to read from
     fn read_directory_recursive<P: AsRef<Path>>(
         &mut self,
         prefix: &str,
@@ -240,7 +350,11 @@ impl MemFS {
         Ok(())
     }
 
-    /// Writes the in-memory filesystem to disk at the specified path
+    /// Writes the entire filesystem structure to disk
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Base path where the filesystem should be written
     pub(crate) fn write_to_disk<P: AsRef<Path>>(&self, path: P) -> Result<(), FSError> {
         let base_path = path.as_ref();
         
@@ -252,7 +366,13 @@ impl MemFS {
         self.write_node_to_disk("", base_path, &self.root)
     }
 
-    /// Recursively writes a node and its children to disk
+    /// Recursively writes a directory node and its contents to disk
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Virtual path prefix for the current node
+    /// * `base_path` - Physical base path where contents should be written
+    /// * `node` - The directory node to write
     fn write_node_to_disk(
         &self,
         prefix: &str,
