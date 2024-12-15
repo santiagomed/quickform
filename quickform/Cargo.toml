@@ -2,6 +2,7 @@
 name = "quickform"
 version = "0.1.0"
 edition = "2021"
+description = "A flexible templating and operation execution framework for Rust"
 license = "MIT"
 homepage = "https://github.com/santiagomed/quickform"
 repository = "https://github.com/santiagomed/quickform"
