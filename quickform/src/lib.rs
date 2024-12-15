@@ -52,7 +52,6 @@ mod operation;
 mod state;
 mod template;
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
@@ -63,16 +62,12 @@ use std::sync::Arc;
 use context::Context;
 use error::Error;
 use fs::MemFS;
-use operation::{FunctionSignature, Operation};
+use operation::{FunctionSignature, Operation, OperationKind};
 use state::{Data, IntoFunctionParams, NoData};
 use template::TemplateEngine;
 
 /// A type alias for Results returned by this library
 type Result<T> = std::result::Result<T, Error>;
-
-/// A boxed operation that can be executed asynchronously
-type BoxedOperation =
-    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
 
 /// The main application struct that manages state, operations, and template rendering
 ///
@@ -81,8 +76,7 @@ type BoxedOperation =
 /// * `T` - The type of state stored in the App
 pub struct App<T> {
     state: T,
-    operations: HashMap<String, BoxedOperation>,
-    paths: Vec<String>,
+    operations: Vec<OperationKind>,
     fs: Arc<RwLock<MemFS>>,
     engine: TemplateEngine<'static>,
 }
@@ -91,8 +85,7 @@ impl Default for App<NoData> {
     fn default() -> Self {
         Self {
             state: NoData,
-            operations: HashMap::new(),
-            paths: Vec::new(),
+            operations: Vec::new(),
             fs: Arc::new(RwLock::new(MemFS::new())),
             engine: TemplateEngine::new(),
         }
@@ -132,7 +125,6 @@ impl App<NoData> {
         App {
             state: Data::new(state),
             operations: self.operations,
-            paths: self.paths,
             fs: self.fs,
             engine: self.engine,
         }
@@ -144,7 +136,6 @@ impl<S1: Send + Sync + 'static> App<Data<S1>> {
         App {
             state: (self.state, Data::new(state)),
             operations: self.operations,
-            paths: self.paths,
             fs: self.fs,
             engine: self.engine,
         }
@@ -158,7 +149,6 @@ macro_rules! impl_app_with_state {
                 App {
                     state: ($(self.state.$idx,)* Data::new(state)),
                     operations: self.operations,
-                    paths: self.paths,
                     fs: self.fs,
                     engine: self.engine,
                 }
@@ -172,7 +162,7 @@ impl_app_with_state!((0, 1); S1, S2; S3);
 impl_app_with_state!((0, 1, 2); S1, S2, S3; S4);
 
 impl<T: Send + Sync + Clone + 'static> App<T> {
-    /// Registers an operation with the application
+    /// Registers a render operation with the application
     ///
     /// # Type Parameters
     ///
@@ -181,13 +171,13 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     ///
     /// # Arguments
     ///
-    /// * `name` - The name/path of the operation
+    /// * `template_path` - The path to the template file
     /// * `operation` - The operation function to register
     ///
     /// # Returns
     ///
     /// The App instance with the new operation registered
-    pub fn operation<FSig, F>(mut self, name: &str, operation: F) -> Self
+    pub fn render_operation<FSig, F>(mut self, template_path: &str, operation: F) -> Self
     where
         FSig: FunctionSignature + 'static,
         F: Operation<FSig> + Copy + Send + Sync + 'static,
@@ -205,9 +195,46 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
             }) as Pin<Box<dyn Future<Output = _> + Send>>
         };
 
-        self.operations
-            .insert(name.to_string(), Box::new(wrapped_op));
-        self.paths.push(name.to_string());
+        self.operations.push(OperationKind::Render(
+            template_path.to_string(),
+            Box::new(wrapped_op),
+        ));
+        self
+    }
+
+    /// Registers a state operation with the application
+    ///
+    /// # Type Parameters
+    ///
+    /// * `FSig` - The function signature of the operation
+    /// * `F` - The operation type
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The operation function to register
+    ///
+    /// # Returns
+    ///
+    /// The App instance with the new operation registered
+    pub fn state_operation<FSig, F>(mut self, operation: F) -> Self
+    where
+        FSig: FunctionSignature + 'static,
+        F: Operation<FSig> + Copy + Send + Sync + 'static,
+        F::Future: Send + 'static,
+        FSig::Output: Send + 'static,
+        T: IntoFunctionParams<FSig>,
+    {
+        let state = self.state.clone();
+        let wrapped_op = move || {
+            let params = state.clone().into_params();
+            let fut = operation.invoke(params);
+            Box::pin(async move {
+                fut.await;
+                ()
+            }) as Pin<Box<dyn Future<Output = ()> + Send>>
+        };
+
+        self.operations.push(OperationKind::State(Box::new(wrapped_op)));
         self
     }
 
@@ -217,34 +244,21 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     ///
     /// * `Result<()>` - Success or an error if any operation fails
     pub async fn run<P: AsRef<Path>>(&self, output_dir: P) -> Result<()> {
-        for path in &self.paths {
-            self.render(path).await?;
+        for operation in &self.operations {
+            match operation {
+                OperationKind::Render(template_path, op) => {
+                    let context = op().await;
+                    let rendered = self.engine.render(template_path, &context.to_value())?;
+                    self.fs.write().await.write_file(template_path, rendered.as_bytes().to_vec())?;
+                }
+                OperationKind::State(op) => {
+                    op().await;
+                }
+            }
         }
+        
         self.fs.write().await.write_to_disk(output_dir.as_ref())?;
         Ok(())
-    }
-
-    /// Renders a single operation by name
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the operation to render
-    ///
-    /// # Returns
-    ///
-    /// * `Result<()>` - The operation result or an error
-    async fn render(&self, name: &str) -> Result<()> {
-        if let Some(op) = self.operations.get(name) {
-            let context = op().await.to_value();
-            let rendered = self.engine.render(name, &context)?;
-            self.fs.write().await.write_file(name, rendered.as_bytes().to_vec())?;
-            Ok(())
-        } else {
-            Err(Error::IOError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Operation not found: {}", name),
-            )))
-        }
     }
 }
 
@@ -253,6 +267,7 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use std::collections::HashMap;
 
     #[derive(Clone, serde::Serialize)]
     struct User {
@@ -277,7 +292,8 @@ mod tests {
         let template_path = tmp_dir.path().join("get_default.jinja");
         std::fs::write(&template_path, "{{ value }}").unwrap();
 
-        let app = App::from_dir(&tmp_dir.path()).operation("get_default.jinja", get_default_name);
+        let app = App::from_dir(&tmp_dir.path())
+            .render_operation("get_default.jinja", get_default_name);
 
         let output_dir = tmp_dir.path().join("output");
         app.run(&output_dir).await.unwrap();
@@ -327,8 +343,8 @@ mod tests {
                 name: "Alice".to_string(),
                 age: 30,
             })
-            .operation("double_age.jinja", double_age)
-            .operation("child/codify_name.jinja", codify_name);
+            .render_operation("double_age.jinja", double_age)
+            .render_operation("child/codify_name.jinja", codify_name);
 
         let output_dir = tmp_dir.path().join("output");
         app.run(&output_dir).await.unwrap();
@@ -362,7 +378,7 @@ mod tests {
             .with_state(Config {
                 timeout: Duration::from_secs(30),
             })
-            .operation("multiple_params.jinja", get_user_with_timeout);
+            .render_operation("multiple_params.jinja", get_user_with_timeout);
 
         let output_dir = tmp_dir.path().join("output");
         app.run(&output_dir).await.unwrap();
@@ -389,11 +405,123 @@ mod tests {
             .with_state(1)
             .with_state(2)
             .with_state(3)
-            .operation("simple_params.jinja", three_params);
+            .render_operation("simple_params.jinja", three_params);
 
         let output_dir = tmp_dir.path().join("output");
         app.run(&output_dir).await.unwrap();
         assert!(output_dir.join("simple_params.jinja").exists());
         assert_eq!(std::fs::read_to_string(output_dir.join("simple_params.jinja")).unwrap(), "6");
+    }
+
+    #[tokio::test]
+    async fn test_state_operation_single_state() {
+        let app = App::default()
+            .with_state(User {
+                name: "Alice".to_string(),
+                age: 30,
+            })
+            .state_operation(|user: Data<User>| async move {
+                user.update(|u| u.name = "Bob".to_string()).await;
+            });
+
+        // Run the app
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        app.run(tmp_dir.path()).await.unwrap();
+
+        // Verify the state was updated
+        assert_eq!(
+            app.state.clone_inner().await.name,
+            "Bob"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_operation_multiple_states() {
+        let app = App::default()
+            .with_state(User {
+                name: "Alice".to_string(),
+                age: 30,
+            })
+            .with_state(Config {
+                timeout: Duration::from_secs(30),
+            })
+            .state_operation(|user: Data<User>, config: Data<Config>| async move {
+                user.update(|u| u.name = "Bob".to_string()).await;
+                config.update(|c| c.timeout = Duration::from_secs(60)).await;
+            });
+
+        // Run the app
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        app.run(tmp_dir.path()).await.unwrap();
+
+        // Verify both states were updated
+        assert_eq!(
+            app.state.0.clone_inner().await.name,
+            "Bob"
+        );
+        assert_eq!(
+            app.state.1.clone_inner().await.timeout,
+            Duration::from_secs(60)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_operation_chain() {
+        let app = App::default()
+            .with_state(User {
+                name: "Alice".to_string(),
+                age: 30,
+            })
+            .state_operation(|user: Data<User>| async move {
+                user.update(|u| u.name = "Bob".to_string()).await;
+            })
+            .state_operation(|user: Data<User>| async move {
+                let current = user.clone_inner().await;
+                user.update(|u| u.name = format!("{}-modified", current.name)).await;
+            });
+
+        // Run the app
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        app.run(tmp_dir.path()).await.unwrap();
+
+        // Verify the state was updated by both operations
+        assert_eq!(
+            app.state.clone_inner().await.name,
+            "Bob-modified"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mixed_operations() {
+        let tmp_dir = tempdir::TempDir::new("test").unwrap();
+        let template_path = tmp_dir.path().join("user.jinja");
+        std::fs::write(&template_path, "Name: {{ name }}").unwrap();
+
+        let app = App::from_dir(&tmp_dir.path())
+            .with_state(User {
+                name: "Alice".to_string(),
+                age: 30,
+            })
+            .state_operation(|user: Data<User>| async move {
+                user.update(|u| u.name = "Bob".to_string()).await;
+            })
+            .render_operation("user.jinja", |user: Data<User>| async move {
+                user.clone_inner().await
+            });
+
+        let output_dir = tmp_dir.path().join("output");
+        app.run(&output_dir).await.unwrap();
+
+        // Verify the state was updated
+        assert_eq!(
+            app.state.clone_inner().await.name,
+            "Bob"
+        );
+
+        // Verify the template was rendered with the updated state
+        assert_eq!(
+            std::fs::read_to_string(output_dir.join("user.jinja")).unwrap(),
+            "Name: Bob"
+        );
     }
 }

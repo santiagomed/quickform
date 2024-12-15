@@ -20,6 +20,23 @@
 //! ```
 
 use std::future::Future;
+use std::pin::Pin;
+
+use crate::context::Context;
+
+// Operation that returns context for template rendering
+type BoxedRenderOperation =
+    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Box<dyn Context>> + Send>> + Send + Sync>;
+
+// Operation that only modifies state
+type BoxedStateOperation =
+    Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+// Enum to store both types of operations
+pub enum OperationKind {
+    Render(String,BoxedRenderOperation), // Include template path
+    State(BoxedStateOperation),
+}
 
 /// Defines the signature of a function, including its parameter and output types
 ///
