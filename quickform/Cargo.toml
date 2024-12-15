@@ -2,6 +2,10 @@
 name = "quickform"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+homepage = "https://github.com/santiagomed/quickform"
+repository = "https://github.com/santiagomed/quickform"
+readme = "../README.md"
 
 [dependencies]
 serde = { workspace = true }
