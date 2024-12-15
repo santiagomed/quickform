@@ -73,23 +73,47 @@ impl MemFS {
         Ok(fs)
     }
 
-    // Create a new file at the specified path
-    pub(crate) fn create_file(&mut self, path: &str, content: Vec<u8>) -> Result<(), FSError> {
+    pub(crate) fn write_file(&mut self, path: &str, content: Vec<u8>) -> Result<(), FSError> {
         let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Err(FSError::InvalidPath);
         }
 
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut current = &mut self.root;
 
-        self.create_node(
-            &components,
-            FSNode::File(FileNode {
-                content,
-                created: timestamp,
-                modified: timestamp,
-            }),
-        )
+        // Navigate to parent directory
+        for &component in components.iter().take(components.len() - 1) {
+            if !current.children.contains_key(component) {
+                current.children.insert(
+                    component.to_string(),
+                    FSNode::Directory(DirectoryNode {
+                        children: HashMap::new(),
+                        created: timestamp,
+                    }),
+                );
+            }
+
+            match current.children.get_mut(component) {
+                Some(FSNode::Directory(dir)) => current = dir,
+                Some(_) => return Err(FSError::NotADirectory(component.to_string())),
+                None => unreachable!("We just inserted the directory"),
+            }
+        }
+
+        // Insert or update the file
+        let name = components.last().unwrap();
+        let file_node = FSNode::File(FileNode {
+            content,
+            created: match current.children.get(*name) {
+                Some(FSNode::File(existing)) => existing.created,
+                _ => timestamp,
+            },
+            modified: timestamp,
+        });
+        
+        current.children.insert(name.to_string(), file_node);
+        Ok(())
     }
 
     // Create a new directory at the specified path
@@ -210,7 +234,48 @@ impl MemFS {
             } else if file_type.is_file() {
                 let content =
                     fs::read(entry.path()).map_err(|e| FSError::NotFound(e.to_string()))?;
-                self.create_file(&virtual_path, content)?;
+                self.write_file(&virtual_path, content)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the in-memory filesystem to disk at the specified path
+    pub(crate) fn write_to_disk<P: AsRef<Path>>(&self, path: P) -> Result<(), FSError> {
+        let base_path = path.as_ref();
+        
+        // Create the root directory if it doesn't exist
+        if !base_path.exists() {
+            fs::create_dir_all(base_path).map_err(FSError::IOError)?;
+        }
+
+        self.write_node_to_disk("", base_path, &self.root)
+    }
+
+    /// Recursively writes a node and its children to disk
+    fn write_node_to_disk(
+        &self,
+        prefix: &str,
+        base_path: &Path,
+        node: &DirectoryNode,
+    ) -> Result<(), FSError> {
+        for (name, child) in &node.children {
+            let child_path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            
+            let full_path = base_path.join(name);
+
+            match child {
+                FSNode::File(file) => {
+                    fs::write(&full_path, &file.content).map_err(FSError::IOError)?;
+                }
+                FSNode::Directory(dir) => {
+                    fs::create_dir_all(&full_path).map_err(FSError::IOError)?;
+                    self.write_node_to_disk(&child_path, &full_path, dir)?;
+                }
             }
         }
         Ok(())
@@ -237,7 +302,7 @@ mod tests {
         assert!(fs.list_dir("test_dir")?.is_empty());
 
         // Test file creation
-        fs.create_file("test_dir/hello.txt", b"Hello, World!".to_vec())?;
+        fs.write_file("test_dir/hello.txt", b"Hello, World!".to_vec())?;
 
         // Test file reading
         assert_eq!(
@@ -285,6 +350,46 @@ mod tests {
         // Verify file contents
         assert_eq!(fs.read_file("test_dir/file1.txt")?, b"Hello");
         assert_eq!(fs.read_file("test_dir/nested/file2.txt")?, b"World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_to_disk() -> Result<(), FSError> {
+        // Create a temporary directory for testing
+        let temp_dir = tempdir::TempDir::new("fs_test").unwrap();
+        let base_path = temp_dir.path();
+
+        // Create a test filesystem in memory
+        let mut fs = MemFS::new();
+        fs.create_dir("test_dir")?;
+        fs.write_file("test_dir/file1.txt", b"Hello".to_vec())?;
+        fs.create_dir("test_dir/nested")?;
+        fs.write_file("test_dir/nested/file2.txt", b"World".to_vec())?;
+
+        // Write the filesystem to disk
+        fs.write_to_disk(base_path)?;
+
+        // Verify the structure on disk
+        assert!(base_path.join("test_dir").is_dir());
+        assert!(base_path.join("test_dir/file1.txt").is_file());
+        assert!(base_path.join("test_dir/nested").is_dir());
+        assert!(base_path.join("test_dir/nested/file2.txt").is_file());
+
+        // Verify file contents
+        assert_eq!(
+            fs::read(base_path.join("test_dir/file1.txt")).unwrap(),
+            b"Hello"
+        );
+        assert_eq!(
+            fs::read(base_path.join("test_dir/nested/file2.txt")).unwrap(),
+            b"World"
+        );
+
+        // Test round-trip: read the written filesystem back into memory
+        let fs2 = MemFS::read_from_disk(base_path)?;
+        assert_eq!(fs2.read_file("test_dir/file1.txt")?, b"Hello");
+        assert_eq!(fs2.read_file("test_dir/nested/file2.txt")?, b"World");
 
         Ok(())
     }

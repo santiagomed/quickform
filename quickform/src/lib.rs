@@ -57,6 +57,8 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use serde::Serialize;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 use context::Context;
 use error::Error;
@@ -81,7 +83,7 @@ pub struct App<T> {
     state: T,
     operations: HashMap<String, BoxedOperation>,
     paths: Vec<String>,
-    fs: MemFS,
+    fs: Arc<RwLock<MemFS>>,
     engine: TemplateEngine<'static>,
 }
 
@@ -91,7 +93,7 @@ impl Default for App<NoData> {
             state: NoData,
             operations: HashMap::new(),
             paths: Vec::new(),
-            fs: MemFS::new(),
+            fs: Arc::new(RwLock::new(MemFS::new())),
             engine: TemplateEngine::new(),
         }
     }
@@ -112,7 +114,7 @@ impl App<NoData> {
         let engine = TemplateEngine::from_memfs(fs.clone());
         Self {
             engine,
-            fs,
+            fs: Arc::new(RwLock::new(fs)),
             ..Self::default()
         }
     }
@@ -214,10 +216,11 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     /// # Returns
     ///
     /// * `Result<()>` - Success or an error if any operation fails
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run<P: AsRef<Path>>(&self, output_dir: P) -> Result<()> {
         for path in &self.paths {
             self.render(path).await?;
         }
+        self.fs.write().await.write_to_disk(output_dir.as_ref())?;
         Ok(())
     }
 
@@ -229,12 +232,13 @@ impl<T: Send + Sync + Clone + 'static> App<T> {
     ///
     /// # Returns
     ///
-    /// * `Result<String>` - The rendered result or an error
-    async fn render(&self, name: &str) -> Result<String> {
+    /// * `Result<()>` - The operation result or an error
+    async fn render(&self, name: &str) -> Result<()> {
         if let Some(op) = self.operations.get(name) {
             let context = op().await.to_value();
             let rendered = self.engine.render(name, &context)?;
-            Ok(rendered)
+            self.fs.write().await.write_file(name, rendered.as_bytes().to_vec())?;
+            Ok(())
         } else {
             Err(Error::IOError(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -275,8 +279,10 @@ mod tests {
 
         let app = App::from_dir(&tmp_dir.path()).operation("get_default.jinja", get_default_name);
 
-        let result = app.render("get_default.jinja").await.unwrap();
-        assert_eq!(result, "Default");
+        let output_dir = tmp_dir.path().join("output");
+        app.run(&output_dir).await.unwrap();
+        assert!(output_dir.join("get_default.jinja").exists());
+        assert_eq!(std::fs::read_to_string(output_dir.join("get_default.jinja")).unwrap(), "Default");
     }
 
     #[tokio::test]
@@ -324,7 +330,12 @@ mod tests {
             .operation("double_age.jinja", double_age)
             .operation("child/codify_name.jinja", codify_name);
 
-        app.run().await.unwrap();
+        let output_dir = tmp_dir.path().join("output");
+        app.run(&output_dir).await.unwrap();
+        assert!(output_dir.join("double_age.jinja").exists());
+        assert_eq!(std::fs::read_to_string(output_dir.join("double_age.jinja")).unwrap(), "Age: 60");
+        assert!(output_dir.join("child/codify_name.jinja").exists());
+        assert_eq!(std::fs::read_to_string(output_dir.join("child/codify_name.jinja")).unwrap(), "Name: 41-6c-69-63-65");
     }
 
     #[tokio::test]
@@ -353,8 +364,10 @@ mod tests {
             })
             .operation("multiple_params.jinja", get_user_with_timeout);
 
-        let result = app.render("multiple_params.jinja").await.unwrap();
-        assert_eq!(result, "30 Bob");
+        let output_dir = tmp_dir.path().join("output");
+        app.run(&output_dir).await.unwrap();
+        assert!(output_dir.join("multiple_params.jinja").exists());
+        assert_eq!(std::fs::read_to_string(output_dir.join("multiple_params.jinja")).unwrap(), "30 Bob");
     }
 
     #[tokio::test]
@@ -378,7 +391,9 @@ mod tests {
             .with_state(3)
             .operation("simple_params.jinja", three_params);
 
-        let result = app.render("simple_params.jinja").await.unwrap();
-        assert_eq!(result, "6");
+        let output_dir = tmp_dir.path().join("output");
+        app.run(&output_dir).await.unwrap();
+        assert!(output_dir.join("simple_params.jinja").exists());
+        assert_eq!(std::fs::read_to_string(output_dir.join("simple_params.jinja")).unwrap(), "6");
     }
 }
