@@ -49,8 +49,8 @@ mod error;
 mod fs;
 mod loader;
 mod operation;
-mod state;
 mod template;
+pub mod state;
 
 use std::future::Future;
 use std::path::Path;

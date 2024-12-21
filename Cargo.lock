@@ -1366,6 +1366,9 @@ version = "0.1.0"
 dependencies = [
  "async-openai",
  "quickform",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,6 +1,3 @@
-use crate::generator::prompts::{entities, SYSTEM_PROMPT};
-use crate::generator::schema;
-use crate::generator::{GenerationContext, GenerationError};
 use async_openai::{
     types::{
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
@@ -8,20 +5,33 @@ use async_openai::{
     },
     Client,
 };
-use boil_codegen::template;
+mod schemas;
+mod prompts;
 
-#[template("templates/express/src/models/modelv3.ts.jinja")]
-pub async fn entities(context: &mut GenerationContext) -> Result<String, GenerationError> {
+use prompts::{SYSTEM_PROMPT, entities};
+use quickform::{App, state::Data};
+
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct GenerationContext {
+    pub user_prompt: String,
+}
+
+// #[template("templates/express/src/models/modelv3.ts.jinja")]
+pub async fn entities(context: Data<GenerationContext>) -> Vec<schemas::entity::Entity> {
     let client = Client::new();
+
+    let context = context.clone_inner().await;
 
     let messages = vec![
         ChatCompletionRequestSystemMessageArgs::default()
             .content(SYSTEM_PROMPT)
-            .build()?
+            .build()
+            .unwrap()
             .into(),
         ChatCompletionRequestUserMessageArgs::default()
             .content(entities::PROMPT.replace("{user_prompt}", &context.user_prompt))
-            .build()?
+            .build()
+            .unwrap()
             .into(),
     ];
 
@@ -29,9 +39,9 @@ pub async fn entities(context: &mut GenerationContext) -> Result<String, Generat
         .model("gpt-4o-mini")
         .response_format(ResponseFormat::JsonObject)
         .messages(messages)
-        .build()?;
-
-    let response = client.chat().create(request).await?;
+        .build()
+        .unwrap();
+    let response = client.chat().create(request).await.unwrap();
     let entities = response.choices[0]
         .message
         .content
@@ -40,10 +50,19 @@ pub async fn entities(context: &mut GenerationContext) -> Result<String, Generat
 
     println!("Entities: {}", entities);
 
-    let entities: Vec<schema::entity::Entity> = serde_json::from_str(&entities)?;
+    let entities: Vec<schemas::entity::Entity> = serde_json::from_str(&entities).unwrap();
     entities
 }
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() {
+    let cwd = std::env::current_dir().unwrap();
+    let app = App::from_dir(cwd.join("../../templates/express"))
+    .with_state(GenerationContext {
+        user_prompt: "I need an e-commerce platform for selling electronics".to_string(),
+    })
+    .render_operation("entities.jinja", entities);
+
+    let output_dir = std::path::Path::new("output");
+    app.run(output_dir).await.unwrap();
 }

@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 quickform = { path = "../quickform" }
 async-openai = "0.25.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
